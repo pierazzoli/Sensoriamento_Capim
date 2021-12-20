@@ -92,6 +92,7 @@
            Consumo  550mW(low power mode)
            Consumo pico 140mA média de 110mA
             // TX verde e RX branco (3.3v)
+
           Pushbutton| Arduino
         ----------------------------------------
            GND      |  GND
@@ -137,15 +138,23 @@
 // ==============================================================================
 // ------------ Variáveis e Constantes -----------------------
 // ==============================================================================
-
-#define buffersz 51
-int16_t buffer[9][buffersz];
 int8_t i;
 
+#define buffersz 35
+int16_t buffer[9][buffersz +1];
+
+
 #define alturaLimitecm 110
-#define alturaSensorescm 80
+#define alturaInstSensorescm 80
+
+#define alturaSemGramainiea 5
+#define alturaPastagemDesejada 12
+#define alturaPastagemDesejadaMedia 30
+#define alturaPastagemDesejadaAlta 40
+
 #define velocidadeLimiteMaxMps 1.1
 #define velocidadeLimiteMinMps 0.1
+
 
 // ==============================================================================
 
@@ -181,13 +190,11 @@ uint16_t dist_vl4;
 TFMPlus tfmP;
 #define TFMINI_TX_PIN 6
 #define TFMINI_RX_PIN 7
-SoftwareSerial tfSerial( TFMINI_TX_PIN, TFMINI_RX_PIN); //verde e branco
+SoftwareSerial tfSerial( TFMINI_RX_PIN, TFMINI_TX_PIN); //verde e branco
 uint16_t dist_TF1;
 
 // MPU6050 - Giroscópio Endereco I2C
 const int MPU = 0x68;
-//SCL     ->     A5
-//SDA     ->     A4
 //Variaveis para armazenar valores do acelerometro e giroscópio
 int AcX, AcY, AcZ, Tmp, GyX, GyY, GyZ;
 
@@ -212,8 +219,6 @@ int AcX, AcY, AcZ, Tmp, GyX, GyY, GyZ;
 #define LED_PIN 13
 bool estadoled = 0; // variavel de controle
 
-
-
 // ==============================================================================
 // ------------ Protótipo das Funções  -----------------------
 // ==============================================================================
@@ -222,6 +227,7 @@ long sensorHC (int trigpin , int echopin);
 void giroscopio ( );
 void interrupcao ( );
 void imprimirBuffer( );
+void imprimirStats( );
 
 // ==============================================================================
 // ------------ Setup -----------------------
@@ -230,7 +236,7 @@ void setup( ) {
 
   //Serial
   Serial.begin(9600);
-  Serial.println("Sistema incializado");
+  Serial.println("Sistema incializando...");
 
   //Inicializa o I2C
   Wire.begin();
@@ -330,7 +336,7 @@ void setup( ) {
   */
 
   i = 0;
-  Serial.println("Fim do SETUP");
+  Serial.println("Setup dos sensores realizado.");
 }
 
 
@@ -339,7 +345,8 @@ void loop( ) {
   if (digitalRead(button_start_stop_PIN) == LOW) // Se o botão for pressionado
   {
     estadoled = !estadoled; // troca o estado do LED
-    if (estadoled) Serial.println ("start;"); else Serial.println ("stop;");
+    if (estadoled) Serial.println ("start; \nID;HC1;VL1;VL2;VL3;VL4;TF1;GyX;GyY;GyZ;");
+    else Serial.println ("stop;");
 
     digitalWrite(LED_PIN, estadoled);
     if (i > 0 )imprimirBuffer( ); //imprime os ultimos dados após o stop
@@ -349,18 +356,13 @@ void loop( ) {
   }
 
   if (estadoled) { //captura dados se Ligado
-    /*
-      dist_vl1 = vl1.read();
-      dist_vl2 = vl2.read();
-      dist_vl3 = vl3.read();
-      dist_vl4 = vl4.read();
-    */
+
     buffer[0][i] = int16_t (sensorHC(hc1_trig_pin , hc1_echo_pin )); //HC-SR04 01
 
-    buffer[1][i] = int16_t (vl1.read()); //VL 01
-    buffer[2][i] = int16_t (vl2.read()); //VL 02
-    buffer[3][i] = int16_t (vl3.read()); //VL 03
-    buffer[4][i] = int16_t (vl4.read()); //VL 04
+    buffer[1][i] = int16_t (vl1.read() / 10); //VL 01
+    buffer[2][i] = int16_t (vl2.read() / 10); //VL 02
+    buffer[3][i] = int16_t (vl3.read() / 10); //VL 03
+    buffer[4][i] = int16_t (vl4.read() / 10); //VL 04
     if (vl1.timeoutOccurred()) {
       Serial.print("vl1 TIMEOUT");
     }
@@ -387,10 +389,7 @@ void loop( ) {
       Serial.println ("Buffer Cheio;");
       imprimirBuffer( );
     }
-
   }
-
-
 }//fim do loop()
 
 
@@ -407,7 +406,7 @@ void motorPwm(int m1, int m2)
 long sensorHC (int trigpin , int echopin)
 {
   digitalWrite( trigpin, HIGH );
-  delayMicroseconds( 100 );
+  delayMicroseconds( 10 );
   digitalWrite( trigpin, LOW );
   int interval = pulseIn( echopin, HIGH );
 
@@ -467,5 +466,76 @@ void imprimirBuffer( ) {
     Serial.print(buffer[8][cont]);
     Serial.println(";");
   }
+  imprimirStats( );
+
   i = 0;
+}
+
+
+
+void imprimirStats( ) {
+
+  int16_t min[6];
+  int16_t max[6];
+  int16_t med[6];
+
+ for (int j = 0 ; j < 6 ; j++){
+  min[j] = buffer[j][0];
+  max[j] = buffer[j][0];
+  med[j] = buffer[j][0];
+}
+
+  for (int cont = 1;  cont < i ; cont++) {
+    for (int j = 0 ; j < 6 ; j++) {
+      if (min[j] > buffer[j][cont]) min[j] = buffer[j][cont];
+      med[j] = med[j] + buffer[j][cont];
+      if (max[j] < buffer[j][cont]) max[j] = buffer[j][cont];
+    }
+  }
+  for (int j = 0 ; j < i ; j++) med[j] = med[j] / i;
+
+  Serial.print("\nSensor\t;Min\t;Med(");
+  Serial.print(i);
+  Serial.print(")\t;Max;\nTF1\t;");
+  Serial.print(min[5]);
+  Serial.print(";\t");
+  Serial.print(med[5]);
+  Serial.print(";\t");
+  Serial.print(max[5]);
+
+  Serial.print(";\t\nHC1\t;");
+  Serial.print(min[0]);
+  Serial.print(";\t");
+  Serial.print(med[0]);
+  Serial.print(";\t");
+  Serial.print(max[0]);
+
+  Serial.print(";\t\nVL1\t;");
+  Serial.print(min[1]);
+  Serial.print(";\t");
+  Serial.print(med[1]);
+  Serial.print(";\t");
+  Serial.print(max[1]);
+
+  Serial.print(";\t\nVL2\t;");
+  Serial.print(min[2]);
+  Serial.print(";\t");
+  Serial.print(med[2]);
+  Serial.print(";\t");
+  Serial.print(max[2]);
+
+  Serial.print(";\t\nVL3\t;");
+  Serial.print(min[3]);
+  Serial.print(";\t");
+  Serial.print(med[3]);
+  Serial.print(";\t");
+  Serial.print(max[3]);
+
+  Serial.print(";\t\nVL4\t;");
+  Serial.print(min[4]);
+  Serial.print(";\t");
+  Serial.print(med[4]);
+  Serial.print(";\t");
+  Serial.print(max[4]);
+  Serial.println(";\t");
 }

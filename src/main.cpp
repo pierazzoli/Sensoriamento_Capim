@@ -140,8 +140,8 @@
 // ==============================================================================
 int8_t i;
 
-#define buffersz 35
-int16_t buffer[9][buffersz +1];
+#define buffersz 30
+int16_t buffer[9][buffersz + 1];
 
 
 #define alturaLimitecm 110
@@ -164,11 +164,14 @@ int16_t buffer[9][buffersz +1];
 uint16_t dist_hc1;
 
 //VL53l1x
+//Intervalo de timeout em 500ms
+//Intervalo entre medidas de 50000 us (50 ms), até 30 ms para short
 
 #define setVLTimeout 500
 #define setVLModeShort true
 #define setVLMeasurementTimingBudget 50000
 #define startVLContinuous 50
+
 
 VL53L1X vl1;
 #define SHUTDOWN_VL1_PIN A0
@@ -228,6 +231,7 @@ void giroscopio ( );
 void interrupcao ( );
 void imprimirBuffer( );
 void imprimirStats( );
+void printMinMedMax (int min, int med, int max);
 
 // ==============================================================================
 // ------------ Setup -----------------------
@@ -253,8 +257,8 @@ void setup( ) {
   digitalWrite(SHUTDOWN_VL2_PIN, LOW);
   pinMode( SHUTDOWN_VL3_PIN, OUTPUT  );   //Desliga VL3
   digitalWrite(SHUTDOWN_VL3_PIN, LOW);
-  pinMode( SHUTDOWN_VL4_PIN, OUTPUT  );   //Desliga VL4
-  digitalWrite(SHUTDOWN_VL4_PIN, LOW);
+ // pinMode( SHUTDOWN_VL4_PIN, OUTPUT  );   //Desliga VL4
+ // digitalWrite(SHUTDOWN_VL4_PIN, LOW);
 
   pinMode(SHUTDOWN_VL1_PIN, INPUT);
   delay(150);
@@ -276,32 +280,33 @@ void setup( ) {
   delay(100);
   vl3.setAddress((uint8_t)23);
   vl3.setTimeout(setVLTimeout);
-
+/*
   pinMode(SHUTDOWN_VL4_PIN, INPUT);
   delay(150);
   vl4.init(true);
   delay(100);
   vl4.setAddress((uint8_t)24);
   vl4.setTimeout(setVLTimeout);
+*/
 
   if (setVLModeShort) {
     vl1.setDistanceMode(VL53L1X::Short);
     vl2.setDistanceMode(VL53L1X::Short);
     vl3.setDistanceMode(VL53L1X::Short);
-    vl4.setDistanceMode(VL53L1X::Short);
+  //  vl4.setDistanceMode(VL53L1X::Short);
   }
 
   //Intervalo entre medidas de 50000 us (50 ms), até 30 ms para short
   vl1.setMeasurementTimingBudget(setVLMeasurementTimingBudget);
   vl2.setMeasurementTimingBudget(setVLMeasurementTimingBudget);
   vl3.setMeasurementTimingBudget(setVLMeasurementTimingBudget);
-  vl4.setMeasurementTimingBudget(setVLMeasurementTimingBudget);
+ // vl4.setMeasurementTimingBudget(setVLMeasurementTimingBudget);
 
   //Taxa Medição VL (ms)
   vl1.startContinuous(startVLContinuous);
   vl2.startContinuous(startVLContinuous);
   vl3.startContinuous(startVLContinuous);
-  vl4.startContinuous(startVLContinuous);
+ // vl4.startContinuous(startVLContinuous);
 
   //I2C Giroscópio e acelerômetro
   Wire.beginTransmission(MPU);
@@ -345,7 +350,7 @@ void loop( ) {
   if (digitalRead(button_start_stop_PIN) == LOW) // Se o botão for pressionado
   {
     estadoled = !estadoled; // troca o estado do LED
-    if (estadoled) Serial.println ("start; \nID;HC1;VL1;VL2;VL3;VL4;TF1;GyX;GyY;GyZ;");
+    if (estadoled) Serial.println ("start; \nID;HC1;VL1;VL2;VL3;TF1;GyX;GyY;GyZ;");
     else Serial.println ("stop;");
 
     digitalWrite(LED_PIN, estadoled);
@@ -362,19 +367,11 @@ void loop( ) {
     buffer[1][i] = int16_t (vl1.read() / 10); //VL 01
     buffer[2][i] = int16_t (vl2.read() / 10); //VL 02
     buffer[3][i] = int16_t (vl3.read() / 10); //VL 03
-    buffer[4][i] = int16_t (vl4.read() / 10); //VL 04
-    if (vl1.timeoutOccurred()) {
-      Serial.print("vl1 TIMEOUT");
-    }
-    if (vl2.timeoutOccurred()) {
-      Serial.print("vl2 TIMEOUT");
-    }
-    if (vl3.timeoutOccurred()) {
-      Serial.print("vl3 TIMEOUT");
-    }
-    if (vl4.timeoutOccurred()) {
-      Serial.print("vl4 TIMEOUT");
-    }
+   // buffer[4][i] = int16_t (vl4.read() / 10); //VL 04
+    if (vl1.timeoutOccurred()) Serial.println("vl1 TIMEOUT");
+    if (vl2.timeoutOccurred()) Serial.println("vl2 TIMEOUT");
+    if (vl3.timeoutOccurred()) Serial.println("vl3 TIMEOUT");
+   // if (vl4.timeoutOccurred()) Serial.println("vl4 TIMEOUT");
 
     tfmP.getData(buffer[5][i]);//TF Mini Plus
 
@@ -401,7 +398,6 @@ void motorPwm(int m1, int m2)
   analogWrite( PWM_M2_PIN, m2);
 }
 
-
 // Sensor HC lê distancia
 long sensorHC (int trigpin , int echopin)
 {
@@ -412,7 +408,6 @@ long sensorHC (int trigpin , int echopin)
 
   return interval * 0.017; //cm
 }
-
 
 // Sensor MPU
 void giroscopio( ) {
@@ -429,7 +424,6 @@ void giroscopio( ) {
   GyZ = Wire.read() << 8 | Wire.read();
 }
 
-
 // Sensor HC lê distancia
 void interrupcao( ) {
   if (estadoled) {
@@ -437,7 +431,6 @@ void interrupcao( ) {
     imprimirBuffer( );
   }
 }
-
 
 // Imprimir os dados no buffer
 void imprimirBuffer( ) {
@@ -455,8 +448,8 @@ void imprimirBuffer( ) {
     Serial.print(";");
     Serial.print(buffer[3][cont]);
     Serial.print(";");
-    Serial.print(buffer[4][cont]);
-    Serial.print(";");
+ //   Serial.print(buffer[4][cont]);
+  //  Serial.print(";");
     Serial.print(buffer[5][cont]);
     Serial.print(";");
     Serial.print(buffer[6][cont]);
@@ -464,10 +457,9 @@ void imprimirBuffer( ) {
     Serial.print(buffer[7][cont]);
     Serial.print(";");
     Serial.print(buffer[8][cont]);
-    Serial.println(";");
+    Serial.println(";");    
   }
-  imprimirStats( );
-
+    //imprimirStats( );
   i = 0;
 }
 
@@ -475,16 +467,17 @@ void imprimirBuffer( ) {
 
 void imprimirStats( ) {
 
-  int16_t min[6];
-  int16_t max[6];
-  int16_t med[6];
+  int16_t min[6]; //Valor mínimo
+  int16_t max[6]; //Valor máximo
+  int16_t med[6]; //Valor médio
 
- for (int j = 0 ; j < 6 ; j++){
-  min[j] = buffer[j][0];
-  max[j] = buffer[j][0];
-  med[j] = buffer[j][0];
-}
+  for (int j = 0 ; j < 6 ; j++) {
+    min[j] = buffer[j][0];
+    max[j] = buffer[j][0];
+    med[j] = buffer[j][0];
+  }
 
+  //Acha o min, med e max
   for (int cont = 1;  cont < i ; cont++) {
     for (int j = 0 ; j < 6 ; j++) {
       if (min[j] > buffer[j][cont]) min[j] = buffer[j][cont];
@@ -492,50 +485,37 @@ void imprimirStats( ) {
       if (max[j] < buffer[j][cont]) max[j] = buffer[j][cont];
     }
   }
-  for (int j = 0 ; j < i ; j++) med[j] = med[j] / i;
+  for (int j = 0 ; j < 6; j++) med[j] = med[j] / i;
 
   Serial.print("\nSensor\t;Min\t;Med(");
   Serial.print(i);
   Serial.print(")\t;Max;\nTF1\t;");
-  Serial.print(min[5]);
-  Serial.print(";\t");
-  Serial.print(med[5]);
-  Serial.print(";\t");
-  Serial.print(max[5]);
+  printMinMedMax (min[5], med[5], max[5]);
 
   Serial.print(";\t\nHC1\t;");
-  Serial.print(min[0]);
-  Serial.print(";\t");
-  Serial.print(med[0]);
-  Serial.print(";\t");
-  Serial.print(max[0]);
+  printMinMedMax (min[0], med[0], max[0]);
 
   Serial.print(";\t\nVL1\t;");
-  Serial.print(min[1]);
-  Serial.print(";\t");
-  Serial.print(med[1]);
-  Serial.print(";\t");
-  Serial.print(max[1]);
+  printMinMedMax (min[1], med[1], max[1]);
 
   Serial.print(";\t\nVL2\t;");
-  Serial.print(min[2]);
-  Serial.print(";\t");
-  Serial.print(med[2]);
-  Serial.print(";\t");
-  Serial.print(max[2]);
+  printMinMedMax (min[2], med[2], max[2]);
 
   Serial.print(";\t\nVL3\t;");
-  Serial.print(min[3]);
-  Serial.print(";\t");
-  Serial.print(med[3]);
-  Serial.print(";\t");
-  Serial.print(max[3]);
+  printMinMedMax (min[3], med[3], max[3]);
 
+/*
   Serial.print(";\t\nVL4\t;");
-  Serial.print(min[4]);
-  Serial.print(";\t");
-  Serial.print(med[4]);
-  Serial.print(";\t");
-  Serial.print(max[4]);
+  printMinMedMax (min[4], med[4], max[4]);
+*/
   Serial.println(";\t");
+ 
+}
+
+void printMinMedMax (int min, int med, int max) {
+  Serial.print(min);
+  Serial.print(";\t");
+  Serial.print(med);
+  Serial.print(";\t");
+  Serial.print(max);
 }

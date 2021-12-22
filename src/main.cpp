@@ -1,6 +1,8 @@
 /*
+    Autor: Eugênio Pierazzoli
+
      Componentes:
-    Arduino UNO
+    Arduino Nano, (Old bootloader 328P)
 
     1 Sensor de Ultrassônico HC-SR04
     1 Giroscópio (i2c)
@@ -122,6 +124,10 @@
            1 (Mini Tf 140mA) + 4 (VL53L1X 40mA) + 1 ( Hall 25 mA) + 1 (HC-SR04 15mA) +
            1 (MPU6050 10mA) + 1 (DHT11 1mA) + 1 LED  + 1 (Bluetooth Hc06 9mA)
            = 360mA
+          
+          Acima de 200mA (Arduino Nano), os sensores devem ser ligados em uma fonte externa, 
+          lembrando de igualar o GND.
+
 */
 
 // ==============================================================================

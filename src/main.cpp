@@ -42,11 +42,11 @@
            SDA      |  Pin A4
            SCL      |  Pin A5
 
-          VL53L1X 4 | Arduino
+          VL53L1X 4 | Arduino  (danificado)
         ----------------------------------------
            VCC      |  +5V
            GND      |  GND
-           Shutdown |  Pin A3
+           Shutdown |  Pin A3 (livre)
            SDA      |  Pin A4
            SCL      |  Pin A5
 
@@ -118,14 +118,16 @@
            TX       |  Pin D0
            RX       |  Pin D1  (3.3v)
           Consumo 0.5mA standby e 8.5mA transmitindo
+          Para usar em outra pinagem com o TF mini,
+          precisa usar a biblioteca NewSoftSerial ou
 
 
           Consumo de pico
-           1 (Mini Tf 140mA) + 4 (VL53L1X 40mA) + 1 ( Hall 25 mA) + 1 (HC-SR04 15mA) +
+           1 (Mini Tf 140mA) + 3 (VL53L1X 40mA) + 1 ( Hall 25 mA) + 1 (HC-SR04 15mA) +
            1 (MPU6050 10mA) + 1 (DHT11 1mA) + 1 LED  + 1 (Bluetooth Hc06 9mA)
-           = 360mA
-          
-          Acima de 200mA (Arduino Nano), os sensores devem ser ligados em uma fonte externa, 
+           = 320mA
+
+          Acima de 200mA (Arduino Nano), os sensores devem ser ligados em uma fonte externa,
           lembrando de igualar o GND.
 
 */
@@ -136,6 +138,9 @@
 
 #include <Wire.h>
 #include <SoftwareSerial.h>
+//Caso use múltiplas instâncias, precisa selecionar o ativo,  portOne.listen(); portTwo.listen();
+//Pinos restritos por modelo e alguns modelos já tem mais de um serial em hardware.
+
 #include <VL53L1X.h>
 #include <TFMPlus.h>
 //#include "DHT.h"
@@ -146,9 +151,9 @@
 // ==============================================================================
 int8_t i;
 
-#define buffersz 30
-int16_t buffer[9][buffersz + 1];
-
+#define buffersz 40
+int16_t buffer[8][buffersz + 1];
+boolean bufferClean = false;
 
 #define alturaLimitecm 110
 #define alturaInstSensorescm 80
@@ -160,6 +165,17 @@ int16_t buffer[9][buffersz + 1];
 
 #define velocidadeLimiteMaxMps 1.1
 #define velocidadeLimiteMinMps 0.1
+
+//  161/23 = 7 pulsos pwm
+#define sincronismoBarraAplicador 7
+
+
+#define nomeBluetooth "AT+NAMERocadeira"
+#define PinBluetooth "AT+PIN0000"
+#define velocidadeBluetooth "AT+BAUD8"
+//PIn: senha
+//BAUD4 = 9600 ,  BAUD8 = 115200
+
 
 
 // ==============================================================================
@@ -178,29 +194,20 @@ uint16_t dist_hc1;
 #define setVLMeasurementTimingBudget 50000
 #define startVLContinuous 50
 
-
 VL53L1X vl1;
 #define SHUTDOWN_VL1_PIN A0
-uint16_t dist_vl1;
 
 VL53L1X vl2;
 #define SHUTDOWN_VL2_PIN A1
-uint16_t dist_vl2;
 
 VL53L1X vl3;
 #define SHUTDOWN_VL3_PIN A2
-uint16_t dist_vl3;
-
-VL53L1X vl4;
-#define SHUTDOWN_VL4_PIN A3
-uint16_t dist_vl4;
 
 // TFmini
 TFMPlus tfmP;
 #define TFMINI_TX_PIN 6
 #define TFMINI_RX_PIN 7
 SoftwareSerial tfSerial( TFMINI_RX_PIN, TFMINI_TX_PIN); //verde e branco
-uint16_t dist_TF1;
 
 // MPU6050 - Giroscópio Endereco I2C
 const int MPU = 0x68;
@@ -209,7 +216,7 @@ int AcX, AcY, AcZ, Tmp, GyX, GyY, GyZ;
 
 // Hall
 #define Hall_interrupt_PIN 2
-
+boolean hallInterrupt = false;
 // PWM Motores
 #define PWM_M1_PIN 10
 #define PWM_M2_PIN 11
@@ -231,13 +238,20 @@ bool estadoled = 0; // variavel de controle
 // ==============================================================================
 // ------------ Protótipo das Funções  -----------------------
 // ==============================================================================
-void motorPwm (int m1, int m2);
+
+void interrupcao ( ); // Interrupção acionada pelo Hall. Gera flag ou imprime o valor e buffer.
+
+void ajustaBluetooth ( ); // Definições do bluetooth
+void leSensoresGravaNoBuffer ( ); // Principal tarefa dentro do loop
+
+void motorPwm (int m1, int m2); // Reação após deslocamento.
 long sensorHC (int trigpin , int echopin);
 void giroscopio ( );
-void interrupcao ( );
+
 void imprimirBuffer( );
 void imprimirStats( );
 void printMinMedMax (int min, int med, int max);
+
 
 // ==============================================================================
 // ------------ Setup -----------------------
@@ -246,7 +260,7 @@ void setup( ) {
 
   //Serial
   Serial.begin(9600);
-  Serial.println("Sistema incializando...");
+  Serial.println(";Carregando;");
 
   //Inicializa o I2C
   Wire.begin();
@@ -263,8 +277,7 @@ void setup( ) {
   digitalWrite(SHUTDOWN_VL2_PIN, LOW);
   pinMode( SHUTDOWN_VL3_PIN, OUTPUT  );   //Desliga VL3
   digitalWrite(SHUTDOWN_VL3_PIN, LOW);
- // pinMode( SHUTDOWN_VL4_PIN, OUTPUT  );   //Desliga VL4
- // digitalWrite(SHUTDOWN_VL4_PIN, LOW);
+
 
   pinMode(SHUTDOWN_VL1_PIN, INPUT);
   delay(150);
@@ -286,33 +299,22 @@ void setup( ) {
   delay(100);
   vl3.setAddress((uint8_t)23);
   vl3.setTimeout(setVLTimeout);
-/*
-  pinMode(SHUTDOWN_VL4_PIN, INPUT);
-  delay(150);
-  vl4.init(true);
-  delay(100);
-  vl4.setAddress((uint8_t)24);
-  vl4.setTimeout(setVLTimeout);
-*/
-
+ 
   if (setVLModeShort) {
     vl1.setDistanceMode(VL53L1X::Short);
     vl2.setDistanceMode(VL53L1X::Short);
     vl3.setDistanceMode(VL53L1X::Short);
-  //  vl4.setDistanceMode(VL53L1X::Short);
   }
 
   //Intervalo entre medidas de 50000 us (50 ms), até 30 ms para short
   vl1.setMeasurementTimingBudget(setVLMeasurementTimingBudget);
   vl2.setMeasurementTimingBudget(setVLMeasurementTimingBudget);
   vl3.setMeasurementTimingBudget(setVLMeasurementTimingBudget);
- // vl4.setMeasurementTimingBudget(setVLMeasurementTimingBudget);
 
   //Taxa Medição VL (ms)
   vl1.startContinuous(startVLContinuous);
   vl2.startContinuous(startVLContinuous);
   vl3.startContinuous(startVLContinuous);
- // vl4.startContinuous(startVLContinuous);
 
   //I2C Giroscópio e acelerômetro
   Wire.beginTransmission(MPU);
@@ -346,8 +348,12 @@ void setup( ) {
     dht.begin();
   */
 
+
+  // Bluetooth - Velocidade, Nome, PIN
+  // ajustaBluetooth ();
+
   i = 0;
-  Serial.println("Setup dos sensores realizado.");
+  Serial.println(";Setup finalizado;");
 }
 
 
@@ -356,7 +362,7 @@ void loop( ) {
   if (digitalRead(button_start_stop_PIN) == LOW) // Se o botão for pressionado
   {
     estadoled = !estadoled; // troca o estado do LED
-    if (estadoled) Serial.println ("start; \nID;HC1;VL1;VL2;VL3;TF1;GyX;GyY;GyZ;");
+    if (estadoled) Serial.println ("start; \n;ID;HC1;VL1;VL2;VL3;TF1;GyX;GyY;GyZ;");
     else Serial.println ("stop;");
 
     digitalWrite(LED_PIN, estadoled);
@@ -368,32 +374,38 @@ void loop( ) {
 
   if (estadoled) { //captura dados se Ligado
 
+    leSensoresGravaNoBuffer (); //Lê os sensores de distância e salva no buffer
+
+    if (i >= buffersz) {
+      Serial.println (";BC;"); //Buffer overflow
+      imprimirBuffer( );
+    }
+  }
+}//fim do loop()
+
+
+void leSensoresGravaNoBuffer (){
     buffer[0][i] = int16_t (sensorHC(hc1_trig_pin , hc1_echo_pin )); //HC-SR04 01
 
     buffer[1][i] = int16_t (vl1.read() / 10); //VL 01
     buffer[2][i] = int16_t (vl2.read() / 10); //VL 02
     buffer[3][i] = int16_t (vl3.read() / 10); //VL 03
-   // buffer[4][i] = int16_t (vl4.read() / 10); //VL 04
-    if (vl1.timeoutOccurred()) Serial.println("vl1 TIMEOUT");
-    if (vl2.timeoutOccurred()) Serial.println("vl2 TIMEOUT");
-    if (vl3.timeoutOccurred()) Serial.println("vl3 TIMEOUT");
-   // if (vl4.timeoutOccurred()) Serial.println("vl4 TIMEOUT");
+    if (vl1.timeoutOccurred()) Serial.println(";vl1 TIMEOUT;");
+    if (vl2.timeoutOccurred()) Serial.println(";vl2 TIMEOUT;");
+    if (vl3.timeoutOccurred()) Serial.println(";vl3 TIMEOUT;");
 
-    tfmP.getData(buffer[5][i]);//TF Mini Plus
+    tfmP.getData(buffer[4][i]);//TF Mini Plus
 
     giroscopio( );
-    buffer[6][i] = GyX;
-    buffer[7][i] = GyY;
-    buffer[8][i] = GyZ;
+    buffer[5][i] = GyX;
+    buffer[6][i] = GyY;
+    buffer[7][i] = GyZ;
 
     i++;
 
-    if (i >= buffersz) {
-      Serial.println ("Buffer Cheio;");
-      imprimirBuffer( );
-    }
-  }
-}//fim do loop()
+}
+
+
 
 
 // Define o PWM dos motores
@@ -432,52 +444,60 @@ void giroscopio( ) {
 
 // Sensor HC lê distancia
 void interrupcao( ) {
-  if (estadoled) {
-    Serial.println("hall;");
-    imprimirBuffer( );
+
+  // detachInterrupt (Hall_interrupt_PIN);
+  if (estadoled) { //captura ligada
+    if (bufferClean) { //Já está esvaziando, sinaliza para o buffer escrever hall ao fim.
+      hallInterrupt = true;
+    }
+    else {
+      Serial.println(";hall;");
+      imprimirBuffer( );
+    }
   }
 }
 
 // Imprimir os dados no buffer
 void imprimirBuffer( ) {
 
+  bufferClean = true; //sinaliza para a interrupção não gravar ou não esvaziar novamente.
+
   for (int cont = 0;  cont < i ; cont++) {
 
-    Serial.print(cont);
     Serial.print(";");
+    Serial.print(cont); //ID           Serial.print(";");
 
-    Serial.print(buffer[0][cont]);
-    Serial.print(";");
-    Serial.print(buffer[1][cont]);
-    Serial.print(";");
-    Serial.print(buffer[2][cont]);
-    Serial.print(";");
-    Serial.print(buffer[3][cont]);
-    Serial.print(";");
- //   Serial.print(buffer[4][cont]);
-  //  Serial.print(";");
-    Serial.print(buffer[5][cont]);
-    Serial.print(";");
-    Serial.print(buffer[6][cont]);
-    Serial.print(";");
-    Serial.print(buffer[7][cont]);
-    Serial.print(";");
-    Serial.print(buffer[8][cont]);
-    Serial.println(";");    
+    Serial.print(buffer[0][cont]);     Serial.print(";");
+    Serial.print(buffer[1][cont]);     Serial.print(";");
+    Serial.print(buffer[2][cont]);     Serial.print(";");
+    Serial.print(buffer[3][cont]);     Serial.print(";");
+    Serial.print(buffer[4][cont]);     Serial.print(";");
+    Serial.print(buffer[5][cont]);     Serial.print(";");
+    Serial.print(buffer[6][cont]);     Serial.print(";");
+    Serial.print(buffer[7][cont]);     Serial.println(";");
   }
-    //imprimirStats( );
+  //imprimirStats( );
   i = 0;
+
+  bufferClean = false;
+
+  if (hallInterrupt) {
+    Serial.println (";hall;");
+    hallInterrupt = false;
+  }
+
+
 }
 
 
 
 void imprimirStats( ) {
 
-  int16_t min[6]; //Valor mínimo
-  int16_t max[6]; //Valor máximo
-  int16_t med[6]; //Valor médio
+  int16_t min[5]; //Valor mínimo
+  int16_t max[5]; //Valor máximo
+  int16_t med[5]; //Valor médio
 
-  for (int j = 0 ; j < 6 ; j++) {
+  for (int j = 0 ; j < 5 ; j++) {
     min[j] = buffer[j][0];
     max[j] = buffer[j][0];
     med[j] = buffer[j][0];
@@ -485,43 +505,40 @@ void imprimirStats( ) {
 
   //Acha o min, med e max
   for (int cont = 1;  cont < i ; cont++) {
-    for (int j = 0 ; j < 6 ; j++) {
+    for (int j = 0 ; j < 5 ; j++) {
       if (min[j] > buffer[j][cont]) min[j] = buffer[j][cont];
       med[j] = med[j] + buffer[j][cont];
       if (max[j] < buffer[j][cont]) max[j] = buffer[j][cont];
     }
   }
-  for (int j = 0 ; j < 6; j++) med[j] = med[j] / i;
+  for (int j = 0 ; j < 5; j++) med[j] = med[j] / i;
 
-  Serial.print("\nSensor\t;Min\t;Med(");
-  Serial.print(i);
-  Serial.print(")\t;Max;\nTF1\t;");
-  printMinMedMax (min[5], med[5], max[5]);
-
-  Serial.print(";\t\nHC1\t;");
-  printMinMedMax (min[0], med[0], max[0]);
-
-  Serial.print(";\t\nVL1\t;");
-  printMinMedMax (min[1], med[1], max[1]);
-
-  Serial.print(";\t\nVL2\t;");
-  printMinMedMax (min[2], med[2], max[2]);
-
-  Serial.print(";\t\nVL3\t;");
-  printMinMedMax (min[3], med[3], max[3]);
-
-/*
-  Serial.print(";\t\nVL4\t;");
-  printMinMedMax (min[4], med[4], max[4]);
-*/
+  Serial.print("\n;Sensor\t;Min\t;Med(");   Serial.print(i);
+  Serial.print(")\t;Max;\nTF1\t;");     printMinMedMax (min[4], med[4], max[4]);
+  Serial.print(";\t\nHC1\t;");          printMinMedMax (min[0], med[0], max[0]);
+  Serial.print(";\t\nVL1\t;");          printMinMedMax (min[1], med[1], max[1]);
+  Serial.print(";\t\nVL2\t;");          printMinMedMax (min[2], med[2], max[2]);
+  Serial.print(";\t\nVL3\t;");          printMinMedMax (min[3], med[3], max[3]);
+  
   Serial.println(";\t");
- 
+
 }
 
 void printMinMedMax (int min, int med, int max) {
-  Serial.print(min);
-  Serial.print(";\t");
-  Serial.print(med);
-  Serial.print(";\t");
+  Serial.print(min);   Serial.print(";\t"); 
+  Serial.print(med);   Serial.print(";\t");
   Serial.print(max);
+}
+
+void ajustaBluetooth () {
+
+  Serial.begin(9600);
+  delay(5000);
+  Serial.print(nomeBluetooth);
+  delay(5000);
+  Serial.print(PinBluetooth);
+  delay(5000);
+  Serial.print(velocidadeBluetooth);
+  delay(5000);
+  Serial.begin(115200);
 }

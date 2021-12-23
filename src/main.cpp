@@ -153,7 +153,6 @@ int8_t i;
 
 #define buffersz 40
 int16_t buffer[8][buffersz + 1];
-boolean bufferClean = false;
 
 #define alturaLimitecm 110
 #define alturaInstSensorescm 80
@@ -252,6 +251,7 @@ void imprimirBuffer( );
 void imprimirStats( );
 void printMinMedMax (int min, int med, int max);
 
+int validaLeituraDistancia (boolean msg); //Intervalos de mínimo e máximo esperado
 
 // ==============================================================================
 // ------------ Setup -----------------------
@@ -299,7 +299,7 @@ void setup( ) {
   delay(100);
   vl3.setAddress((uint8_t)23);
   vl3.setTimeout(setVLTimeout);
- 
+
   if (setVLModeShort) {
     vl1.setDistanceMode(VL53L1X::Short);
     vl2.setDistanceMode(VL53L1X::Short);
@@ -361,9 +361,11 @@ void loop( ) {
 
   if (digitalRead(button_start_stop_PIN) == LOW) // Se o botão for pressionado
   {
+
+    //Estado de espera pelo acionamento do botão
     estadoled = !estadoled; // troca o estado do LED
-    if (estadoled) Serial.println ("start; \n;ID;HC1;VL1;VL2;VL3;TF1;GyX;GyY;GyZ;");
-    else Serial.println ("stop;");
+    if (estadoled) Serial.println (";start; \n;ID;HC1;VL1;VL2;VL3;TF1;GyX;GyY;GyZ;");
+    else Serial.println (";stop;");
 
     digitalWrite(LED_PIN, estadoled);
     if (i > 0 )imprimirBuffer( ); //imprime os ultimos dados após o stop
@@ -372,6 +374,8 @@ void loop( ) {
     delay(100);
   }
 
+
+  //Estado de execução do sistema
   if (estadoled) { //captura dados se Ligado
 
     leSensoresGravaNoBuffer (); //Lê os sensores de distância e salva no buffer
@@ -380,33 +384,86 @@ void loop( ) {
       Serial.println (";BC;"); //Buffer overflow
       imprimirBuffer( );
     }
+
+    if (hallInterrupt) {
+      Serial.println(";hall;");
+      hallInterrupt = false;
+      imprimirBuffer( );
+    }
+
   }
 }//fim do loop()
 
 
-void leSensoresGravaNoBuffer (){
-    buffer[0][i] = int16_t (sensorHC(hc1_trig_pin , hc1_echo_pin )); //HC-SR04 01
+void leSensoresGravaNoBuffer () {
 
-    buffer[1][i] = int16_t (vl1.read() / 10); //VL 01
-    buffer[2][i] = int16_t (vl2.read() / 10); //VL 02
-    buffer[3][i] = int16_t (vl3.read() / 10); //VL 03
-    if (vl1.timeoutOccurred()) Serial.println(";vl1 TIMEOUT;");
-    if (vl2.timeoutOccurred()) Serial.println(";vl2 TIMEOUT;");
-    if (vl3.timeoutOccurred()) Serial.println(";vl3 TIMEOUT;");
 
-    tfmP.getData(buffer[4][i]);//TF Mini Plus
+  buffer[0][i] = int16_t (sensorHC(hc1_trig_pin , hc1_echo_pin )); //HC-SR04 01
 
-    giroscopio( );
-    buffer[5][i] = GyX;
-    buffer[6][i] = GyY;
-    buffer[7][i] = GyZ;
+  buffer[1][i] = int16_t (vl1.read() / 10); //VL 01
+  buffer[2][i] = int16_t (vl2.read() / 10); //VL 02
+  buffer[3][i] = int16_t (vl3.read() / 10); //VL 03
 
-    i++;
+  tfmP.getData(buffer[4][i]);//TF Mini Plus
+
+  giroscopio();
+  buffer[5][i] = GyX;
+  buffer[6][i] = GyY;
+  buffer[7][i] = GyZ;
+
+  validaLeituraDistancia(true);
+
+  i++; //Indice do buffer
 
 }
 
 
+int validaLeituraDistancia (boolean msg) {
 
+  int resultado = 0;
+  if (buffer[0][i] >= alturaLimitecm || buffer[0][i] <= 2)
+  {
+    if (msg) Serial.println(";HC1 range error;");
+    resultado = -1;
+  }
+
+  if (vl1.timeoutOccurred()) if (msg) Serial.println(";vl1 TIMEOUT;");
+  if (vl2.timeoutOccurred()) if (msg) Serial.println(";vl2 TIMEOUT;");
+  if (vl3.timeoutOccurred()) if (msg) Serial.println(";vl3 TIMEOUT;");
+
+  if (buffer[1][i] >= alturaLimitecm || buffer[0][i] <= 2)
+  { if (msg)Serial.println(";VL1 range error;");
+    resultado = -2;
+  }
+
+  if (buffer[2][i] >= alturaLimitecm || buffer[0][i] <= 2)
+  { if (msg)Serial.println(";VL2 range error;");
+    resultado = -3;
+  }
+
+  if (buffer[3][i] >= alturaLimitecm || buffer[0][i] <= 2)
+  { if (msg)Serial.println(";VL2 range error;");
+    resultado = -4;
+  }
+
+  if (buffer[4][i] >= alturaLimitecm || buffer[0][i] <= 2)
+  { if (msg)Serial.println(";HC1 range error;");
+    resultado = -5;
+  }
+
+  return resultado;
+
+}
+
+
+// Sensor HC lê distancia
+void interrupcao( ) {
+
+  // detachInterrupt (Hall_interrupt_PIN);
+  if (estadoled) { //captura ligada
+    hallInterrupt = true;
+  }
+}
 
 // Define o PWM dos motores
 void motorPwm(int m1, int m2)
@@ -420,7 +477,7 @@ void motorPwm(int m1, int m2)
 long sensorHC (int trigpin , int echopin)
 {
   digitalWrite( trigpin, HIGH );
-  delayMicroseconds( 10 );
+  delayMicroseconds( 10 ); // 10µS TTL pulse (0,01ms)
   digitalWrite( trigpin, LOW );
   int interval = pulseIn( echopin, HIGH );
 
@@ -442,25 +499,11 @@ void giroscopio( ) {
   GyZ = Wire.read() << 8 | Wire.read();
 }
 
-// Sensor HC lê distancia
-void interrupcao( ) {
 
-  // detachInterrupt (Hall_interrupt_PIN);
-  if (estadoled) { //captura ligada
-    if (bufferClean) { //Já está esvaziando, sinaliza para o buffer escrever hall ao fim.
-      hallInterrupt = true;
-    }
-    else {
-      Serial.println(";hall;");
-      imprimirBuffer( );
-    }
-  }
-}
 
-// Imprimir os dados no buffer
+// Imprime os dados no buffer
+//
 void imprimirBuffer( ) {
-
-  bufferClean = true; //sinaliza para a interrupção não gravar ou não esvaziar novamente.
 
   for (int cont = 0;  cont < i ; cont++) {
 
@@ -478,15 +521,6 @@ void imprimirBuffer( ) {
   }
   //imprimirStats( );
   i = 0;
-
-  bufferClean = false;
-
-  if (hallInterrupt) {
-    Serial.println (";hall;");
-    hallInterrupt = false;
-  }
-
-
 }
 
 
@@ -519,13 +553,13 @@ void imprimirStats( ) {
   Serial.print(";\t\nVL1\t;");          printMinMedMax (min[1], med[1], max[1]);
   Serial.print(";\t\nVL2\t;");          printMinMedMax (min[2], med[2], max[2]);
   Serial.print(";\t\nVL3\t;");          printMinMedMax (min[3], med[3], max[3]);
-  
+
   Serial.println(";\t");
 
 }
 
 void printMinMedMax (int min, int med, int max) {
-  Serial.print(min);   Serial.print(";\t"); 
+  Serial.print(min);   Serial.print(";\t");
   Serial.print(med);   Serial.print(";\t");
   Serial.print(max);
 }

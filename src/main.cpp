@@ -92,7 +92,7 @@
            TX       |  Pin D6
            RX       |  Pin D7  (3.3v)
            Consumo  550mW(low power mode)
-           Consumo pico 140mA média de 110mA
+           Consumo pico 200 média e 140mA (manual SJ-GU-TFmini-S-01 A00 Datasheet.pdf)
             // TX verde e RX branco (3.3v)
 
           Pushbutton| Arduino
@@ -123,9 +123,9 @@
 
 
           Consumo de pico
-           1 (Mini Tf 140mA) + 3 (VL53L1X 40mA) + 1 ( Hall 25 mA) + 1 (HC-SR04 15mA) +
+           1 (Mini Tf 200mA) + 3 (VL53L1X 40mA) + 1 ( Hall 25 mA) + 1 (HC-SR04 15mA) +
            1 (MPU6050 10mA) + 1 (DHT11 1mA) + 1 LED  + 1 (Bluetooth Hc06 9mA)
-           = 320mA
+           = 380mA
 
           Acima de 200mA (Arduino Nano), os sensores devem ser ligados em uma fonte externa,
           lembrando de igualar o GND.
@@ -365,7 +365,12 @@ void loop( ) {
     else Serial.println (";stop;");
 
     digitalWrite(LED_PIN, estadoled);
-    if (i > 0 )imprimirBuffer( ); //imprime os ultimos dados após o stop
+    if (i > 0 ){
+      imprimirStats( ) ; 
+      // imprimirBuffer( );
+      i=0; //Indice do buffer
+    }
+    
 
     while (digitalRead(button_start_stop_PIN) == LOW); //Começa após soltar o botão
     delay(100);
@@ -418,13 +423,21 @@ void leSensoresGravaNoBuffer () {
 
 }
 
+/*
+Retorna o somatório de erros. 
+-1 para HC1 - Sensor HC-SR04
+-2 para VL1 - Sensor VL53l1X
+-4 para VL2 - Sensor VL53l1X
+-8 para VL3 - Sensor VL53l1X
+-16 para TF1 - Sensor TF Mini Plus
 
+*/
 int validaLeituraDistancia (boolean msg) {
 
   int resultado = 0;
   if (buffer[0][i] >= alturaLimitecm || buffer[0][i] <= 2)
   {
-    if (msg) Serial.println(";HC1 range error;");
+    if (msg) Serial.println(";HC1_RE;");// range error
     resultado = -1;
   }
 
@@ -433,23 +446,23 @@ int validaLeituraDistancia (boolean msg) {
   if (vl3.timeoutOccurred()) if (msg) Serial.println(";vl3 TIMEOUT;");
 
   if (buffer[1][i] >= alturaLimitecm || buffer[0][i] <= 2)
-  { if (msg)Serial.println(";VL1 range error;");
-    resultado = -2;
+  { if (msg)Serial.println(";VL1_RE;");// range error
+    resultado = resultado  -2;
   }
 
   if (buffer[2][i] >= alturaLimitecm || buffer[0][i] <= 2)
-  { if (msg)Serial.println(";VL2 range error;");
-    resultado = -3;
+  { if (msg)Serial.println(";VL2_RE;");// range error
+    resultado = resultado -4;
   }
 
   if (buffer[3][i] >= alturaLimitecm || buffer[0][i] <= 2)
-  { if (msg)Serial.println(";VL2 range error;");
-    resultado = -4;
+  { if (msg)Serial.println(";VL3_RE;");// range error
+    resultado = resultado -8;
   }
 
   if (buffer[4][i] >= alturaLimitecm || buffer[0][i] <= 2)
-  { if (msg)Serial.println(";HC1 range error;");
-    resultado = -5;
+  { if (msg)Serial.println(";TF1_RE;");// range error;
+    resultado = resultado -16;
   }
 
   return resultado;

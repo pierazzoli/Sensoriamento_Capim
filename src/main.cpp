@@ -151,7 +151,7 @@
 // ==============================================================================
 int8_t i;
 
-#define buffersz 40
+#define buffersz 25
 int16_t buffer[8][buffersz + 1];
 
 #define alturaLimitecm 110
@@ -278,7 +278,6 @@ void setup( ) {
   pinMode( SHUTDOWN_VL3_PIN, OUTPUT  );   //Desliga VL3
   digitalWrite(SHUTDOWN_VL3_PIN, LOW);
 
-
   pinMode(SHUTDOWN_VL1_PIN, INPUT);
   delay(150);
   vl1.init(true);
@@ -348,7 +347,6 @@ void setup( ) {
     dht.begin();
   */
 
-
   // Bluetooth - Velocidade, Nome, PIN
   // ajustaBluetooth ();
 
@@ -361,7 +359,6 @@ void loop( ) {
 
   if (digitalRead(button_start_stop_PIN) == LOW) // Se o botão for pressionado
   {
-
     //Estado de espera pelo acionamento do botão
     estadoled = !estadoled; // troca o estado do LED
     if (estadoled) Serial.println (";start; \n;ID;HC1;VL1;VL2;VL3;TF1;GyX;GyY;GyZ;");
@@ -382,13 +379,18 @@ void loop( ) {
 
     if (i >= buffersz) {
       Serial.println (";BC;"); //Buffer overflow
-      imprimirBuffer( );
+     
+      imprimirStats( ) ; 
+      // imprimirBuffer( );
+      i=0; //Indice do buffer
     }
 
     if (hallInterrupt) {
       Serial.println(";hall;");
       hallInterrupt = false;
-      imprimirBuffer( );
+      imprimirStats( ) ; 
+      // imprimirBuffer( );
+      i=0; //Indice do buffer
     }
 
   }
@@ -396,7 +398,6 @@ void loop( ) {
 
 
 void leSensoresGravaNoBuffer () {
-
 
   buffer[0][i] = int16_t (sensorHC(hc1_trig_pin , hc1_echo_pin )); //HC-SR04 01
 
@@ -476,12 +477,14 @@ void motorPwm(int m1, int m2)
 // Sensor HC lê distancia
 long sensorHC (int trigpin , int echopin)
 {
+  digitalWrite(trigpin, LOW);
+	delayMicroseconds(2);
   digitalWrite( trigpin, HIGH );
   delayMicroseconds( 10 ); // 10µS TTL pulse (0,01ms)
   digitalWrite( trigpin, LOW );
   int interval = pulseIn( echopin, HIGH );
 
-  return interval * 0.017; //cm
+  return interval * 0.017; //cm considera a velocidade do som no ar de 340m/s
 }
 
 // Sensor MPU
@@ -508,7 +511,7 @@ void imprimirBuffer( ) {
   for (int cont = 0;  cont < i ; cont++) {
 
     Serial.print(";");
-    Serial.print(cont); //ID           Serial.print(";");
+    Serial.print(cont);               Serial.print(";");//ID;
 
     Serial.print(buffer[0][cont]);     Serial.print(";");
     Serial.print(buffer[1][cont]);     Serial.print(";");
@@ -519,8 +522,6 @@ void imprimirBuffer( ) {
     Serial.print(buffer[6][cont]);     Serial.print(";");
     Serial.print(buffer[7][cont]);     Serial.println(";");
   }
-  //imprimirStats( );
-  i = 0;
 }
 
 

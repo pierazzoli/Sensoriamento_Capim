@@ -154,8 +154,8 @@ int8_t i;
 #define buffersz 25
 int16_t buffer[8][buffersz + 1];
 
-#define alturaLimitecm 110
-#define alturaInstSensorescm 80
+#define alturaLimitecm 106 // Variação na ponta se passar em uma pedra de 20 cm de altura.
+#define alturaInstSensorescm 76.5 //valor medido 76.5 a 79 cm
 
 #define alturaSemGramainiea 5
 #define alturaPastagemDesejada 12
@@ -168,26 +168,23 @@ int16_t buffer[8][buffersz + 1];
 //  161/23 = 7 pulsos pwm
 #define sincronismoBarraAplicador 7
 
-
 #define nomeBluetooth "AT+NAMERocadeira"
 #define PinBluetooth "AT+PIN0000"
 #define velocidadeBluetooth "AT+BAUD8"
 //PIn: senha
 //BAUD4 = 9600 ,  BAUD8 = 115200
 
-
-
 // ==============================================================================
 
 //HC-04 01
 #define hc1_trig_pin 3
 #define hc1_echo_pin 4
-uint16_t dist_hc1;
 
-//VL53l1x
-//Intervalo de timeout em 500ms
-//Intervalo entre medidas de 50000 us (50 ms), até 30 ms para short
 
+/*
+VL53l1x - Intervalo de timeout em 500ms
+Intervalo entre medidas de 50000 us (50 ms), até 30 ms para short
+*/
 #define setVLTimeout 500
 #define setVLModeShort true
 #define setVLMeasurementTimingBudget 50000

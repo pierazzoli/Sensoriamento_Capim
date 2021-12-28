@@ -135,7 +135,9 @@
 // ==============================================================================
 
 #include <Arduino.h>
+
 #include <MemoryFree.h>
+//#include <avr/wdt.h>
 
 #include <Wire.h>
 #include <SoftwareSerial.h>
@@ -152,11 +154,12 @@
 // ==============================================================================
 int8_t i;
 
-#define buffersz 25
+#define buffersz 35
 int16_t buffer[8][buffersz + 1];
 
 #define alturaLimitecm 106 // Variação na ponta se passar em uma pedra de 20 cm de altura.
 #define alturaInstSensorescm 76.5 //valor medido 76.5 a 79 cm
+#define zonaMortaSensorCm 2 //Menor valor de zona morta
 
 #define alturaSemGramainiea 5
 #define alturaPastagemDesejada 12
@@ -189,8 +192,8 @@ int dadoBluetooth = 0;
 */
 #define setVLTimeout 500
 #define setVLModeShort true
-#define setVLMeasurementTimingBudget 50000
-#define startVLContinuous 50
+#define setVLMeasurementTimingBudget 200000
+#define startVLContinuous 200
 
 VL53L1X vl1;
 #define SHUTDOWN_VL1_PIN A0
@@ -328,7 +331,7 @@ void setup( ) {
   delay(20);
   tfmP.begin( &tfSerial);
   tfmP.sendCommand( SOFT_RESET, 0);
-  tfmP.sendCommand( SET_FRAME_RATE, FRAME_20);
+  tfmP.sendCommand( SET_FRAME_RATE, FRAME_10);// FRAME_20
 
   //LED onboard D13
   pinMode(LED_PIN, OUTPUT);
@@ -354,11 +357,12 @@ void setup( ) {
 
   i = 0;
   Serial.println(";EOS;");//End of setup
+  //wdt_enable (WDTO_2S);  // Se tiver algum processo maior que este tempo, terá que ser alterado
 }
 
 
 void loop( ) {
-
+//wdt_reset ();
   // Controle de Start/Stop pelo botão
   if (digitalRead(button_start_stop_PIN) == LOW) // Se o botão for pressionado
   {
@@ -369,7 +373,7 @@ void loop( ) {
 
   //Controle de Start/Stop pelo bluetooth ou terminal 0 para 1 inicia
   if (Serial.available()) {
-
+    comandosBluetooth( );
   }
 
   //Estado de execução do sistema
@@ -414,22 +418,20 @@ void leSensoresGravaNoBuffer ( ) {
   validaLeituraDistancia(true);
 
   i++; //Indice do buffer
-
-}
+  }
 
 /*
-  Retorna o somatório de erros.
+  Retorna o somatório de erros para valores fora do esperado ou sem resposta.
   -1 para HC1 - Sensor HC-SR04
   -2 para VL1 - Sensor VL53l1X
   -4 para VL2 - Sensor VL53l1X
   -8 para VL3 - Sensor VL53l1X
   -16 para TF1 - Sensor TF Mini Plus
-
 */
 int validaLeituraDistancia (boolean msg) {
 
   int resultado = 0;
-  if (buffer[0][i] >= alturaLimitecm || buffer[0][i] <= 2)
+  if (buffer[0][i] >= alturaLimitecm || buffer[0][i] <= zonaMortaSensorCm)
   {
     if (msg) Serial.println(";HC1_RE;");// range error HC1 (HC-SR04)
     resultado = -1;
@@ -439,28 +441,27 @@ int validaLeituraDistancia (boolean msg) {
   if (vl2.timeoutOccurred()) if (msg) Serial.println(";VL2_TO;"); // TIME OUT
   if (vl3.timeoutOccurred()) if (msg) Serial.println(";VL3_TO;"); // TIME OUT
 
-  if (buffer[1][i] >= alturaLimitecm || buffer[1][i] <= 2)
+  if (buffer[1][i] >= alturaLimitecm || buffer[1][i] <= zonaMortaSensorCm)
   { if (msg)Serial.println(";VL1_RE;");// range error VL1 (VL53L1X)
     resultado = resultado  - 2;
   }
 
-  if (buffer[2][i] >= alturaLimitecm || buffer[2][i] <= 2)
+  if (buffer[2][i] >= alturaLimitecm || buffer[2][i] <= zonaMortaSensorCm)
   { if (msg)Serial.println(";VL2_RE;");// range error VL2 (VL53L1X)
     resultado = resultado - 4;
   }
 
-  if (buffer[3][i] >= alturaLimitecm || buffer[3][i] <= 2)
+  if (buffer[3][i] >= alturaLimitecm || buffer[3][i] <= zonaMortaSensorCm)
   { if (msg)Serial.println(";VL3_RE;");// range error VL3 (VL53L1X)
     resultado = resultado - 8;
   }
 
-  if (buffer[4][i] >= alturaLimitecm || buffer[4][i] <= 2)
+  if (buffer[4][i] >= alturaLimitecm || buffer[4][i] <= zonaMortaSensorCm)
   { if (msg)Serial.println(";TF1_RE;");// range error TF1 (TF Mini Plus)
     resultado = resultado - 16;
   }
 
   return resultado;
-
 }
 
 
@@ -475,6 +476,7 @@ void interrupcao( ) {
 
 // Define o PWM dos motores
 void motorPwm(int m1, int m2) {
+
   //adicionar limitadores min e max
   analogWrite( PWM_M1_PIN, m1);
   analogWrite( PWM_M2_PIN, m2);
@@ -482,6 +484,7 @@ void motorPwm(int m1, int m2) {
 
 // Sensor HC lê distancia
 long sensorHC (int trigpin , int echopin) {
+
   digitalWrite(trigpin, LOW);
   delayMicroseconds(2);
   digitalWrite( trigpin, HIGH );
@@ -494,6 +497,7 @@ long sensorHC (int trigpin , int echopin) {
 
 // Sensor MPU
 void giroscopio( ) {
+
   Wire.beginTransmission(MPU);
   Wire.write(0x3B);
   Wire.endTransmission(false);
@@ -507,14 +511,10 @@ void giroscopio( ) {
   GyZ = Wire.read() << 8 | Wire.read();
 }
 
-
-
 // Imprime os dados no buffer
-//
 void imprimirBuffer( ) {
 
   for (int cont = 0;  cont < i ; cont++) {
-
     Serial.print(";");
     Serial.print(cont);               Serial.print(";");//ID;
 
@@ -530,6 +530,39 @@ void imprimirBuffer( ) {
 }
 
 void imprimirStats( ) {
+
+  int16_t min[5]; //Valor mínimo
+  int16_t max[5]; //Valor máximo
+  int16_t med[5]; //Valor médio
+
+  for (int j = 0 ; j < 5 ; j++) {
+    min[j] = buffer[j][0];
+    max[j] = buffer[j][0];
+    med[j] = buffer[j][0];
+  }
+
+  //Acha o min, med e max
+  for (int cont = 1;  cont < i ; cont++) {
+    for (int j = 0 ; j < 5 ; j++) {
+      min[j] = min(min[j], buffer[j][cont] );
+      med[j] = med[j] + buffer[j][cont];
+      max[j] = max(buffer[j][cont] , max[j]);
+    }
+  }
+  for (int j = 0 ; j < 5; j++) med[j] = med[j] / i;
+
+  Serial.print("\n;Sensor\t;Min\t;Med(");   Serial.print(i);
+  Serial.print(")\t;Max;\nTF1\t;");     printMinMedMax (min[4], med[4], max[4]);
+  Serial.print(";\t\nHC1\t;");          printMinMedMax (min[0], med[0], max[0]);
+  Serial.print(";\t\nVL1\t;");          printMinMedMax (min[1], med[1], max[1]);
+  Serial.print(";\t\nVL2\t;");          printMinMedMax (min[2], med[2], max[2]);
+  Serial.print(";\t\nVL3\t;");          printMinMedMax (min[3], med[3], max[3]);
+
+  Serial.println(";\t");
+
+}
+/*
+void imprimirStats2( ) {
 
   int16_t min[5]; //Valor mínimo
   int16_t max[5]; //Valor máximo
@@ -561,7 +594,7 @@ void imprimirStats( ) {
   Serial.println(";\t");
 
 }
-
+*/
 void printMinMedMax (int min, int med, int max) {
   Serial.print(min);   Serial.print(";\t");
   Serial.print(med);   Serial.print(";\t");
@@ -585,45 +618,56 @@ void ajustaBluetooth ( ) {
 /*
   Lê o serial ou Bluetooth
 
-  0 - Interrompe o experimento
-  1 - Inicia o experimento
+  0 - Interrompe o experimento.   Imprime ";ON;"
+  1 - Inicia o experimento.       Imprime ";OFF;"
 
-  i - Indica a direção de início do ponto marcado
-  f - Indica a direção do final  do ponto marcado
+  i - Indica a direção de início do ponto marcado. Imprime ";Dir_INI;"
+  f - Indica a direção do final  do ponto marcado. Imprime ";Dir_FIM;"
 
-  p - ping para teste
-  m - memória livre
+  p - ping para teste. Imprime ";ping;"
+  m - memória livre. Imprime ";mem_livre; QTD;"
+  r - reset
+
 */
 void comandosBluetooth( ) {
-  if (Serial.available()) { //SE O BLUETOOTH ESTIVER HABILITADO, FAZ
-    dadoBluetooth = Serial.read(); //VARIÁVEL RECEBE O VALOR ENVIADO PELO BLUETOOTH
-    if (dadoBluetooth == '1') { //SE O VALOR RECEBIDO FOR IGUAL A 1, FAZ
+  if (Serial.available()) { 
+    dadoBluetooth = Serial.read(); 
+    if (dadoBluetooth == '1' && !estadoled) {
       Serial.println(";ON;");
       estadoled = false;
       acoesMenu( );
     }
-    if (dadoBluetooth == '0') { //SE O VALOR RECEBIDO FOR IGUAL A 0, FAZ
+    if (dadoBluetooth == '0' && estadoled) {
       estadoled = true;
       acoesMenu( );
       Serial.println(";OFF;");
     }
-    if (dadoBluetooth == 'p') { //SE O VALOR RECEBIDO FOR IGUAL A p, FAZ
+    if (dadoBluetooth == 'p') {
       Serial.println(";ping;");
-      if (dadoBluetooth == 'i') { //SE O VALOR RECEBIDO FOR IGUAL A i, FAZ
-        Serial.println(";Dir_INI;");
-        if (dadoBluetooth == 'f') { //SE O VALOR RECEBIDO FOR IGUAL A f, FAZ
-          Serial.println(";Dir_FIM;");
-          if (dadoBluetooth == 'm') { //SE O VALOR RECEBIDO FOR IGUAL A f, FAZ
-            Serial.print(";memoria:");
-            Serial.print(freeMemory());
-            Serial.println(";");
-          } else { //SENÃO, FAZ
-            //Serial.print("ERRO"); //IMPRIME O TEXTO NA SERIAL
-          }
-        }
-      }
     }
+    if (dadoBluetooth == 'i') {
+      Serial.println(";Dir_INI;");
+    }
+    if (dadoBluetooth == 'f') { 
+      Serial.println(";Dir_FIM;");
+    }
+    if (dadoBluetooth == 'm') { 
+      Serial.print(";mem_livre;");
+      Serial.print(freeMemory());
+      Serial.println(";bytes;"); //bytes de 2048 bytes (Uno e Nano)
+    } 
+   /* if (dadoBluetooth == 'r') { 
+      Serial.print(";rst;");
+      while (true) ; // fica aqui até resetar
+    } 
+    */
   }
+  /*else 
+  { //SENÃO, FAZ
+    //Serial.print("ERRO"); //IMPRIME O TEXTO NA SERIAL
+  } 
+  */
+
 }
 
 void acoesMenu( ) {

@@ -171,7 +171,7 @@ int16_t buffer[8][buffersz + 1];
 
 // Distancia total de 161cm / 23cm por pulso = 7 slot pwm
 #define sincronismoBarraAplicador 7
-int16_t bufferPWM[7]= {0,0,0,0,0,0,0};
+int16_t bufferPWM[7] = {0, 0, 0, 0, 0, 0, 0};
 
 
 // ==============================================================================
@@ -233,10 +233,10 @@ boolean hallInterrupt = false;
 #define button_start_stop_PIN 9
 
 
-  // DHT11
-  #define dht_PIN 5
-  #define DHTTYPE DHT11
-  DHT dht(dht_PIN, DHTTYPE);
+// DHT11
+#define dht_PIN 5
+#define DHTTYPE DHT11
+DHT dht(dht_PIN, DHTTYPE);
 
 
 // LED
@@ -385,6 +385,7 @@ void loop( ) {
   if (Serial.available()) {
     comandosBluetooth( );
   }
+  Serial.flush();//teste
 
   //Estado de execução do sistema
   if (estadoled) { //captura dados se Ligado
@@ -407,6 +408,7 @@ void loop( ) {
       // imprimirStats( ) ;
       imprimirBuffer( );
       i = 0; //Indice do buffer
+      interrupts();
     }
   }
 }//fim do loop()
@@ -489,6 +491,7 @@ void interrupcao( ) {
   // detachInterrupt (Hall_interrupt_PIN);
   if (estadoled) { //captura ligada
     hallInterrupt = true;
+    noInterrupts();
   }
 }
 
@@ -544,22 +547,18 @@ void giroscopio( ) {
   GyZ = Wire.read() << 8 | Wire.read();
 }
 /*
-  Função para imprimir os dados do buffer.
+  Função para imprimir os dados do buffer (matriz [8][i],
+  onde i são as linhas armazenadas até o momento).
 */
 void imprimirBuffer( ) {
 
   for (int cont = 0;  cont < i ; cont++) {
     Serial.print(";");
-    Serial.print(cont);               Serial.print(";");//ID;
-
-    Serial.print(buffer[0][cont]);     Serial.print(";");
-    Serial.print(buffer[1][cont]);     Serial.print(";");
-    Serial.print(buffer[2][cont]);     Serial.print(";");
-    Serial.print(buffer[3][cont]);     Serial.print(";");
-    Serial.print(buffer[4][cont]);     Serial.print(";");
-    Serial.print(buffer[5][cont]);     Serial.print(";");
-    Serial.print(buffer[6][cont]);     Serial.print(";");
-    Serial.print(buffer[7][cont]);     Serial.println(";");
+    Serial.print(cont);                   Serial.print(";");//ID;
+    for (int j = 0; j <= 7; j++ ) {
+      Serial.print(buffer[j][cont]);      Serial.print(";");//Sensores;
+    }
+    Serial.println("");
   }
 }
 
@@ -595,56 +594,23 @@ void imprimirStats( ) {
 
   //Imprime
   Serial.print("\n;Sensor ;Min ;Med(");   Serial.print(i);
-  Serial.print(");Max;\n;TF1\t;");     printMinMedMax (min[4], med[4], max[4]);
-  Serial.print(";\t\n;HC1\t;");          printMinMedMax (min[0], med[0], max[0]);
-  Serial.print(";\t\n;VL1\t;");          printMinMedMax (min[1], med[1], max[1]);
-  Serial.print(";\t\n;VL2\t;");          printMinMedMax (min[2], med[2], max[2]);
-  Serial.print(";\t\n;VL3\t;");          printMinMedMax (min[3], med[3], max[3]);
-  Serial.println(";\t");
+  Serial.print(");Max;\n;TF1"); printMinMedMax (min[4], med[4], max[4]);
+  Serial.print(";HC1");          printMinMedMax (min[0], med[0], max[0]);
+  Serial.print(";VL1");          printMinMedMax (min[1], med[1], max[1]);
+  Serial.print(";VL2");          printMinMedMax (min[2], med[2], max[2]);
+  Serial.print(";VL3");          printMinMedMax (min[3], med[3], max[3]);
+
 }
 
-/*
-  void imprimirStats2( ) {
-
-  int16_t min[5]; //Valor mínimo
-  int16_t max[5]; //Valor máximo
-  int16_t med[5]; //Valor médio
-
-  for (int j = 0 ; j < 5 ; j++) {
-    min[j] = buffer[j][0];
-    max[j] = buffer[j][0];
-    med[j] = buffer[j][0];
-  }
-
-  //Acha o min, med e max
-  for (int cont = 1;  cont < i ; cont++) {
-    for (int j = 0 ; j < 5 ; j++) {
-      if (min[j] > buffer[j][cont]) min[j] = buffer[j][cont];
-      med[j] = med[j] + buffer[j][cont];
-      if (max[j] < buffer[j][cont]) max[j] = buffer[j][cont];
-    }
-  }
-  for (int j = 0 ; j < 5; j++) med[j] = med[j] / i;
-
-  Serial.print("\n;Sensor\t;Min\t;Med(");   Serial.print(i);
-  Serial.print(")\t;Max;\nTF1\t;");     printMinMedMax (min[4], med[4], max[4]);
-  Serial.print(";\t\nHC1\t;");          printMinMedMax (min[0], med[0], max[0]);
-  Serial.print(";\t\nVL1\t;");          printMinMedMax (min[1], med[1], max[1]);
-  Serial.print(";\t\nVL2\t;");          printMinMedMax (min[2], med[2], max[2]);
-  Serial.print(";\t\nVL3\t;");          printMinMedMax (min[3], med[3], max[3]);
-
-  Serial.println(";\t");
-
-  }
-*/
 
 /*
   Função auxiliar para imprimir os valores min med max
 */
 void printMinMedMax (int min, int med, int max) {
+  Serial.print(";\t");
   Serial.print(min);   Serial.print(";\t");
   Serial.print(med);   Serial.print(";\t");
-  Serial.print(max);
+  Serial.print(max);   Serial.println(";");
 }
 
 /*
@@ -682,47 +648,51 @@ void setupBluetooth ( ) {
 
 */
 void comandosBluetooth( ) {
-  if (Serial.available()) {
-    dadoBluetooth = Serial.read();
-    if (dadoBluetooth == '1' && !estadoled) {
-      Serial.println(";ON;");
-      estadoled = false;
-      acoesMenu( );
-    }
-    if (dadoBluetooth == '0' && estadoled) {
-      estadoled = true;
-      acoesMenu( );
-      Serial.println(";OFF;");
-    }
-    if (dadoBluetooth == 'p') {
-      Serial.println(";ping;");
-    }
-    if (dadoBluetooth == 'i') {
+
+  dadoBluetooth = Serial.read();
+
+  switch (dadoBluetooth) {
+    case 1:
+      if (!estadoled) {
+        Serial.println(";ON;");
+        estadoled = false;
+        acoesMenu( );
+      }
+      break;
+    case 0:
+      if (estadoled) {
+        estadoled = true;
+        acoesMenu( );
+        Serial.println(";OFF;");
+      }
+      break;
+    case 'i':
       Serial.println(";Dir_INI;");
-    }
-    if (dadoBluetooth == 'f') {
+      break;
+    case 'f':
       Serial.println(";Dir_FIM;");
-    }
-    if (dadoBluetooth == 'm') {
+      break;
+    case  'm':
       Serial.print(";mem_livre;");
       Serial.print(freeMemory());
       Serial.println(";bytes;"); //bytes de 2048 bytes (Uno e Nano)
-    }
-    /* if (dadoBluetooth == 'r') {
-       Serial.print(";rst;");
-       while (true) ; // fica aqui até resetar
-      }
-    */
-  }
-  /*else
-    { //SENÃO, FAZ
-    //Serial.print("ERRO"); //IMPRIME O TEXTO NA SERIAL
-    }
-  */
+      break;
+    case 'p':
+      Serial.println(";ping;");
+      break;
 
+    default:
+      // comando(s)
+      break;
+  }
+  Serial.flush();
 }
 
+
+
+
 void acoesMenu( ) {
+
   estadoled = !estadoled; // troca o estado do LED
   if (estadoled) {
     Serial.println (";start; \n;ID;HC1;VL1;VL2;VL3;TF1;GyX;GyY;GyZ;");
@@ -735,7 +705,5 @@ void acoesMenu( ) {
       i = 0; //Indice do buffer
     }
   }
-
   digitalWrite(LED_PIN, estadoled);
-
 }

@@ -1,15 +1,16 @@
+
 /* ---------------------------------------------------------------------
     Autor: Eugênio Pierazzoli
-------------------------------------------------------------------------
+  ------------------------------------------------------------------------
   Componentes:
     1 Arduino Nano (Old Bootloader 328P)
     (ATMEGA328P 16MHz, 2 KB RAM, 30 KB Flash)
 
     1 Sensor de Ultrassônico HC-SR04
-    1 Giroscópio (I2C)
-    1 Bluetooth
-    4 VL53L1X (I2C)
-    1 TF Mini Plus
+    1 Giroscópio    (I2C)
+    1 Bluetooth     (UART)
+    4 VL53L1X       (I2C)
+    1 TF Mini Plus  (UART)
     1 Hall
     1 DHT11
     1 Push Button
@@ -80,7 +81,7 @@
            VCC      |  3.5 a 5.5V
            GND      |  GND
            Dados    |  Pin D5
-         Consumo: 0.3mA (measuring) 60uA (standby)
+         Consumo: 0.3mA (medindo) 60 uA (standby)
 
         TF Mini Plus| Arduino
         ----------------------------------------
@@ -89,7 +90,7 @@
            TX       |  Pin D6
            RX       |  Pin D7  (3.3v)
            Consumo:  550mW (low power mode)
-           Consumo: pico 200 média e 140mA 
+           Consumo: pico 200, média e 140mA
            (Datasheet SJ-GU-TFmini-S-01 A00 Datasheet.pdf)
             // TX verde e RX branco (3.3v)
 
@@ -115,15 +116,15 @@
            RX       |  Pin D1  (3.3v)
           Consumo: 0.5mA standby e 8.5mA transmitindo.
 
---------------------------------------------------------------------------------
---------------------------------------------------------------------------------
+  --------------------------------------------------------------------------------
+  --------------------------------------------------------------------------------
    Soma do consumo de pico esperado:
 
-      1 (TF Mini Plus 200mA) + 3 (VL53L1X 40mA) + 1 (Hall 25 mA) + 
+      1 (TF Mini Plus 200mA) + 3 (VL53L1X 40mA) + 1 (Hall 25mA) +
       1 (HC-SR04 15mA) + 1 (MPU6050 10mA) + 1 (DHT11 1mA) +  1 LED +
       1 (Bluetooth Hc06 9mA)
       = 380mA
-Notas:
+  Notas:
   - Acima de 200mA, os sensores devem ser ligados em uma fonte externa.
   - Todas as fontes e ligações do GND devem ser comuns.
   - A inversão da polaridade do TF Mini Plus causará a queima do componente.
@@ -137,68 +138,114 @@ Notas:
 //#include <avr/wdt.h>
 #include <Wire.h>                  //v1.0
 /*
-Para múltiplas instâncias, é necessário selecionar qual está ativo, 
-com os comandos bluetooth.listen(); tfmini.listen(); Entretanto o BT foi conectado 
-no TX e RX, tirando proveito do buffer de hardware.
-O SoftwareSerial restritos por modelo e alguns modelos já tem mais de um serial em hardware.
+  Para múltiplas instâncias, é necessário selecionar qual está ativo, com os comandos
+  como bluetooth.listen(); tfmini.listen(); Entretanto o BT foi conectado no TX e RX,
+  utilizando buffer de hardware.
+  O SoftwareSerial restritos por modelo e alguns modelos já tem mais de um serial em
+  hardware.
 */
 #include <SoftwareSerial.h>       //v1.0
 #include <VL53L1X.h>              //v1.3.0
 #include <TFMPlus.h>              //v1.5.0
 
-#include "DHT.h"                  //v1.4.3
-#include "Adafruit_Sensor.h"      //v1.1.4
+/*
+  #include "DHT.h"                  //v1.4.3
+  #include <DHT_U.h>
+  #include "Adafruit_Sensor.h"      //v1.1.4
+*/
 
 // ==============================================================================
 // ------------------ Variáveis Ambientais e Constantes -------------------------
 // ==============================================================================
-int8_t i;
 
-#define bufferSZ 20
-int16_t bufferSensores[8][bufferSZ + 1];
-
-#define zonaMortaSensorCm 2 //Menor valor de zona morta dos sensores de altura
-#define alturaInstSensorescm 77 //valor medido 76.5 a 79 cm (folgas de acoplamento)
-#define alturaLimiteCm 106 // Altura medida quando a roda é erguida a 20 cm
-
-#define alturaSemGramainiea 5
-#define alturaPastagemDesejada 12 //Limite inferior
-#define alturaPastagemIndesejadaMedia 30
-#define alturaPastagemDesejadaAlta 40
-
-#define velocidadeLimiteMaxMetrosPorSegundo 1.1
-#define velocidadeLimiteMinMetrosPorSegundo 0.1
-
-// Distancia total de 161cm / 23cm por pulso = 7 slot pwm
-#define bufferSZDistanciaAplicador 7
-int16_t bufferPWM[2][7] = {0, 0, 0, 0, 0, 0, 0}; //motores ou setores das cordas
+float version = 3112.21;
 
 boolean debug = false;
+boolean rawData = true;
+boolean stats = false;
+boolean continuousMode = true;
+
+
+int8_t i; //Index do buffer
+#define bufferSZ 10
+int16_t bufferSensors[8][bufferSZ + 1];
+
+#define deathZoneSensors    2    //Menor valor de zona morta dos sensores
+#define heightSensorInstallCm 77 //valor medido 76.5 a 79 cm (folgas acoplamento)
+#define heightSensorLimit 106    // Altura medida quando a roda é erguida a 20 cm
+
+#define heightNoPasture    5     //
+#define heightMinPasture  12     //Limite inferior
+#define heightMinHerbs    30     //Limite inferior da erva
+#define heightMeanHerbs   40     //Limite considerado certo de erva
+
+/*
+  #define minSpeedMPS     0.11     //Deslocamento mínimo de 0,4 km/h
+  #define maxSpeedMPS     1.11     //Deslocamento de 4 km/h
+
+
+  // Distância total de 161cm / 23cm por pulso = 7 slot PWM
+  #define bufferSZLenghtEquip 7
+  #define bufferSZSections 2      //Motores ou setores das cordas
+  int16_t bufferPWM[bufferSZSections][bufferSZLenghtEquip];
+*/
 
 // ==============================================================================
-// -----------------Pinagem, temporizações e ajustes dos sensores----------------
+//          --------------- Habilitar sensores ----------------
+// ==============================================================================
+/*boolean VL1Enable = true;
+  boolean VL2Enable = true;
+  boolean VL3Enable = true;
+  boolean VL4Enable = false;
+
+  boolean TF1Enable = true;
+
+  boolean HC1Enable = true;
+  boolean HC2Enable = false;
+  boolean HC3Enable = false;
+
+  boolean DHT11Enable = true;
+
+  boolean BluetoothEnable = true;
+
+  boolean MPU6050 = true;
+
+  boolean SensorHallEnable = true;
+*/
+// ==============================================================================
+// --------------- Pinagem, temporizações e ajustes dos sensores ----------------
 // ==============================================================================
 
 //Bluetooth
 //Nome: UGV
-#define setNomeBluetooth "AT+NAMEUGV"
+#define setBtName "AT+NAMEUGV"
 //Senha PIN: 0000
-#define setPINBluetooth "AT+PIN0000"
-
+#define setBtPIN "AT+PIN0000"
 //Velocidade BAUD4 = 9600 ,  BAUD8 = 115200
-#define setVelocidadeBluetooth "AT+BAUD8"
-int dadoBluetooth = 0;
+#define setBtSpeed "AT+BAUD8"
+int bluetoothData = 0;
 
-//HC-04 01
+//HC-04 (HC01)
 #define HC1_TRIG_PIN 3
 #define HC1_ECHO_PIN 4
 
 /*
+  //HC-04 (HC02)
+  #define HC1_TRIG_PIN A6
+  #define HC1_ECHO_PIN A7
+
+  //HC-04 (HC03)
+  #define HC1_TRIG_PIN 8
+  #define HC1_ECHO_PIN 12
+*/
+
+/*
   VL53L1X - Intervalo de timeout em 500ms
-  Intervalo entre medidas de 50000 us (50 ms), até 30 ms para short
+  Intervalo entre medidas de 50000 us (50 ms), até 30 ms para o modo de
+  curta distância.
 */
 #define setVLTimeout 500
-#define setVLModeShort true
+#define setVLModeShort true  //para 1,3 metros
 #define setVLMeasurementTimingBudget 200000
 #define setVLContinuous 200
 
@@ -215,14 +262,13 @@ VL53L1X vl3;
 TFMPlus tfmP;
 #define TFMINI_TX_PIN 6
 #define TFMINI_RX_PIN 7
-SoftwareSerial tfSerial( TFMINI_RX_PIN, TFMINI_TX_PIN); //verde e branco
+SoftwareSerial tfSerial(TFMINI_RX_PIN, TFMINI_TX_PIN); // Fio verde e branco
 
-// MPU6050 - Giroscópio 
+// MPU6050 - Acelerômetro e giroscópio
 const int MPU = 0x68; //Endereco I2C
-//Variaveis para armazenar valores do acelerometro e giroscópio
 int AcX, AcY, AcZ, Tmp, GyX, GyY, GyZ;
 
-// Hall
+// Sensor de campo Hall
 #define HALL_INTERRUPT_PIN 2
 boolean hallInterrupt = false;
 
@@ -233,57 +279,74 @@ boolean hallInterrupt = false;
 // Botão Start/Stop
 #define BUTTON_START_STOP_PIN 9
 
-
-// DHT11
-#define DHT_PIN 5
-#define DHTTYPE DHT11
-DHT dht(DHT_PIN, DHTTYPE);
-
+/*
+  // DHT11 - Sensor de Umidade e Temperatura
+  #define DHT_PIN 5
+  #define DHTTYPE DHT11
+  DHT dht(DHT_PIN, DHTTYPE);
+*/
 
 // LED
 #define LED_PIN 13
-bool estadoLED = 0; // variavel de controle
+bool getAllData = false; // Variável de estado
 
 // ==============================================================================
-// ----------------------- Protótipo das Funções  -----------------------
+// --------------------------- Protótipo das Funções  ---------------------------
 // ==============================================================================
 void  setupBluetooth (void);      //Ajusta o Bluetooth (Senha, nome, velocidade)
 
 void  preStartPosStop(void);      //Muda o estado do LED e imprime estados.
-void  interrupcao (void);         //Interrupção Hall. Gera flag.
-void  lerComandosBluetooth (void);//Lê char (Tag, start/stop, ping, memória livre)
+void  hallinterrupt (void);         //Interrupção Hall. Gera flag.
+void  readBTCmd (void);//Lê char (Tag, start/stop, ping, memória livre)
 
-void  lerSensoresGravarNoBuffer (void);   // Tarefa de ler os sensores e armazenar
-void  imprimirBuffer(void);
-void  imprimirStats(void);
-void  printMinMedMax (int min, int med, int max);
+void  setDataBuffer (void);   // Tarefa de ler os sensores e armazenar
+void  printBuffer(void);
+void  printStats(void);
+void  printMinMeanMax (int min, float med, int max);
 
-long  sensorHC (int trigpin , int echopin);
-void  giroscopio (void);
-int   validarLeituraDistancia (boolean msg); //Verifica mínimo e máximo esperado
+long  getDataHC (int trigpin , int echopin);
+void  getDataGY (void);
+int   checkDistanceVaule (boolean msg); //Verifica mínimo e máximo esperado
 
 void  motorPwm (int m1, int m2);       // Saída motor ou setor após deslocamento
 
-
-
+// ==============================================================================
 // ==============================================================================
 // ----------------------- Setup -----------------------
 // ==============================================================================
+// ==============================================================================
 void setup( ) {
 
+
   //Serial
-  Serial.begin(9600); //BT modificado para 115200
-  Serial.println(";SS;"); //Starting Setup
+  Serial.begin(9600); //Bauds
+  //Mensagens
+  Serial.print(";SS;Ver:"); //"Starting Setup"
+  Serial.print(float(version));
+  Serial.print(";mem:"); Serial.print(freeMemory()); Serial.println(";");
+
+  if (continuousMode) Serial.println(";Mod_Cont;");
+  if (debug) Serial.println(";debug;");
 
   //Inicializa o I2C
   Wire.begin();
-  Wire.setClock(400000); // usa I2C a 400 kHz
+  Wire.setClock(400000); //I2C à 400 kHz
+
+  //TF Mini Plus
+  tfSerial.begin( 115200);
+  delay(20);
+  tfmP.begin( &tfSerial);
+  tfmP.sendCommand( SOFT_RESET, 0);
+  if (continuousMode)
+    tfmP.sendCommand( SET_FRAME_RATE, FRAME_20);// FRAME_20
+  else
+    tfmP.sendCommand( SET_FRAME_RATE, FRAME_0);// FRAME_0
 
   //HC1
   pinMode( HC1_TRIG_PIN, OUTPUT );   //HC-04 trig
   pinMode( HC1_ECHO_PIN, INPUT  );   //HC-04 echo
 
-  //VL 53L1X
+  //VL53L1X
   pinMode( SHUTDOWN_VL1_PIN, OUTPUT );    //Desliga VL1
   digitalWrite(SHUTDOWN_VL1_PIN, LOW);
   pinMode( SHUTDOWN_VL2_PIN, OUTPUT  );   //Desliga VL2
@@ -323,10 +386,18 @@ void setup( ) {
   vl2.setMeasurementTimingBudget(setVLMeasurementTimingBudget);
   vl3.setMeasurementTimingBudget(setVLMeasurementTimingBudget);
 
-  //Taxa Medição VL (ms)
-  vl1.startContinuous(setVLContinuous);
-  vl2.startContinuous(setVLContinuous);
-  vl3.startContinuous(setVLContinuous);
+  //Medição VL (ms)
+  if (continuousMode) {
+    vl1.startContinuous(setVLContinuous);
+    vl2.startContinuous(setVLContinuous);
+    vl3.startContinuous(setVLContinuous);
+  }
+  else
+  {
+    vl1.stopContinuous();
+    vl2.stopContinuous();
+    vl3.stopContinuous();
+  }
 
   //I2C Giroscópio e acelerômetro
   Wire.beginTransmission(MPU);
@@ -334,83 +405,94 @@ void setup( ) {
   Wire.write(0);
   Wire.endTransmission(true);
 
-  //TF Mini Plus
-  tfSerial.begin( 115200);
-  delay(20);
-  tfmP.begin( &tfSerial);
-  tfmP.sendCommand( SOFT_RESET, 0);
-  tfmP.sendCommand( SET_FRAME_RATE, FRAME_10);// FRAME_20
-
   //LED onboard D13
   pinMode(LED_PIN, OUTPUT);
 
   //Pushbutton
   pinMode(BUTTON_START_STOP_PIN, INPUT_PULLUP);
 
-  //HallInt
+  //Interrupção pelo Hall
   pinMode(HALL_INTERRUPT_PIN, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(HALL_INTERRUPT_PIN), interrupcao, RISING);
+  attachInterrupt(digitalPinToInterrupt(HALL_INTERRUPT_PIN), hallinterrupt, RISING);
 
   //PWM
   pinMode(PWM_M1_PIN, OUTPUT);
   pinMode(PWM_M2_PIN, OUTPUT);
 
   /*
-    // DHT
-    dht.begin();
-  
+    // Bluetooth - Velocidade, Nome, PIN
+    //setupBluetooth ();
 
-  // Bluetooth - Velocidade, Nome, PIN
-  //setupBluetooth ();
-*/
+
+    //DHT11
+    dht.begin();
+    Serial.print(F(";Umid: "));
+    Serial.print(int(dht.readHumidity()));
+    Serial.print(F("%  Temp: "));
+    Serial.print(int(dht.readTemperature()));
+    Serial.println(F("°C;"));
+  */
+
 
   i = 0; //index do buffer dos sensores
-  Serial.println(";EOS;");//End of setup
-  //wdt_enable (WDTO_2S);  // Se tiver algum processo maior que este tempo, terá que ser alterado
+  //Serial.print(";mem:"); Serial.print(freeMemory());Serial.println(";");
+  Serial.println(";EOS;");  //Mensagem "End of setup"
+
+  //wdt_enable (WDTO_2S);
 }
 
-// ==============================================================================
-// ------------ Loop -----------------------
-// ==============================================================================
+/*
+  ==============================================================================
+  ==============================================================================
+  ------------------------------------ Loop ------------------------------------
+  ==============================================================================
+  ==============================================================================
+*/
 void loop( ) {
   //wdt_reset ();
+
+
 
   // Controle de Start/Stop pelo botão
   if (digitalRead(BUTTON_START_STOP_PIN) == LOW) // Se o botão for pressionado
   {
     preStartPosStop( ); //ações de start/stop
-    while (digitalRead(BUTTON_START_STOP_PIN) == LOW) {};
+    while (digitalRead(BUTTON_START_STOP_PIN) == LOW) {}
     delay(100);
   }
 
   //Controle de Start/Stop pelo bluetooth ou terminal 0 para 1 inicia
   if (Serial.available()) {
-    lerComandosBluetooth( );
+    readBTCmd( );
+    Serial.flush();
+    //Serial.println ("ok bt");
   }
-  Serial.flush();//teste
+
 
   //Estado de execução do sistema
-  if (estadoLED) { //captura dados se Ligado
+  if (getAllData) { //Captura dados se Ligado
 
-    lerSensoresGravarNoBuffer (); //Lê os sensores de distância e salva no buffer
-    validarLeituraDistancia(debug);
-    i++; //Indice do buffer
+    setDataBuffer (); //Lê os sensores de distância e salva no buffer
+    checkDistanceVaule(debug);
+
+    i++; //Índice do buffer
 
     if (i >= bufferSZ) {
       Serial.println (";BO;"); //Buffer overflow
 
-      if (debug) imprimirBuffer( );
-      imprimirStats( );
-
-      i = 0; //Indice do buffer
+      if (rawData)  printBuffer( );
+      if (stats)    printStats( );
+      i = 0; //Índice do buffer
     }
 
     if (hallInterrupt) {
       Serial.println(";h;"); //hall
       hallInterrupt = false;
-      if (debug) imprimirBuffer( );
-      imprimirStats( );
-      i = 0; //Indice do buffer
+
+      if (rawData)  printBuffer( );
+      if (stats)    printStats( );
+
+      i = 0; //Índice do buffer
       interrupts();
     }
   }
@@ -421,20 +503,33 @@ void loop( ) {
   Realiza  a gravação dos valores lidos para cm da distância.
   Usa o inteiro i como indexador da posição. Não realiza testes para validar.
 */
-void lerSensoresGravarNoBuffer ( ) {
+void setDataBuffer ( ) {
 
-  bufferSensores[0][i] = int16_t (sensorHC(HC1_TRIG_PIN , HC1_ECHO_PIN )); //HC-SR04 01
+  bufferSensors[0][i] = int16_t (getDataHC(HC1_TRIG_PIN , HC1_ECHO_PIN )); //HC-SR04 01
 
-  bufferSensores[1][i] = int16_t (vl1.read() / 10); //VL 01
-  bufferSensores[2][i] = int16_t (vl2.read() / 10); //VL 02
-  bufferSensores[3][i] = int16_t (vl3.read() / 10); //VL 03
+  if (continuousMode) {
+    bufferSensors[1][i] = int16_t (vl1.read() / 10); //VL 01
+    bufferSensors[2][i] = int16_t (vl2.read() / 10); //VL 02
+    bufferSensors[3][i] = int16_t (vl3.read() / 10); //VL 03
+    tfmP.getData(bufferSensors[4][i]);//TF Mini Plus
+  }
+  else
+  {
+    tfmP.sendCommand( SET_FRAME_RATE, FRAME_0);
 
-  tfmP.getData(bufferSensores[4][i]);//TF Mini Plus
+    bufferSensors[1][i] = int16_t (vl1.readSingle() / 10); //VL 01
+    bufferSensors[2][i] = int16_t (vl2.readSingle() / 10); //VL 02
+    bufferSensors[3][i] = int16_t (vl3.readSingle() / 10); //VL 03
 
-  giroscopio();
-  bufferSensores[5][i] = GyX;
-  bufferSensores[6][i] = GyY;
-  bufferSensores[7][i] = GyZ;
+    tfmP.sendCommand( SET_FRAME_RATE, FRAME_20);// FRAME_20
+    tfmP.getData(bufferSensors[4][i]);//TF Mini Plus
+    tfmP.sendCommand( SET_FRAME_RATE, FRAME_0);
+  }
+
+  getDataGY();
+  bufferSensors[5][i] = GyX;
+  bufferSensors[6][i] = GyY;
+  bufferSensors[7][i] = GyZ;
 }
 
 /*
@@ -448,36 +543,91 @@ void lerSensoresGravarNoBuffer ( ) {
     -8 para VL3 - Sensor VL53L1X
     -16 para TF1 - Sensor TF Mini Plus
 */
-int validarLeituraDistancia (boolean msg) {
+int checkDistanceVaule (boolean msg) {
 
   int resultado = 0;
-  if (bufferSensores[0][i] >= alturaLimiteCm || bufferSensores[0][i] <= zonaMortaSensorCm)
+
+  // range error HC1 (HC-SR04)
+  if (bufferSensors[0][i] >= heightSensorLimit || bufferSensors[0][i] <= deathZoneSensors)
   {
-    if (msg) Serial.println(";HC1_RE;");// range error HC1 (HC-SR04)
+    if (msg) Serial.println(";HC1_RE;");
     resultado = -1;
   }
 
-  if (vl1.timeoutOccurred()) if (msg) Serial.println(";VL1_TO;"); // TIME OUT
-  if (vl2.timeoutOccurred()) if (msg) Serial.println(";VL2_TO;"); // TIME OUT
-  if (vl3.timeoutOccurred()) if (msg) Serial.println(";VL3_TO;"); // TIME OUT
+  if (vl1.timeoutOccurred()) if (msg) Serial.println(";VL1_TO;"); // TIMEOUT
+  if (vl2.timeoutOccurred()) if (msg) Serial.println(";VL2_TO;"); // TIMEOUT
+  if (vl3.timeoutOccurred()) if (msg) Serial.println(";VL3_TO;"); // TIMEOUT
 
-  if (bufferSensores[1][i] >= alturaLimiteCm || bufferSensores[1][i] <= zonaMortaSensorCm)
-  { if (msg)Serial.println(";VL1_RE;");// range error VL1 (VL53L1X)
+  // range error VL1 (VL53L1X)
+  if (bufferSensors[1][i] >= heightSensorLimit || bufferSensors[1][i] <= deathZoneSensors)
+  {
+    if (msg)
+    {
+      Serial.println(";VL1_RE;");
+
+      Serial.print("range: ");
+      Serial.print(vl1.ranging_data.range_mm);
+      Serial.print("\tstatus: ");
+      Serial.print(VL53L1X::rangeStatusToString(vl1.ranging_data.range_status));
+      Serial.print("\tpeak signal: ");
+      Serial.print(vl1.ranging_data.peak_signal_count_rate_MCPS);
+      Serial.print("\tambient: ");
+      Serial.print(vl1.ranging_data.ambient_count_rate_MCPS);
+
+      Serial.println();
+    }
     resultado = resultado  - 2;
   }
 
-  if (bufferSensores[2][i] >= alturaLimiteCm || bufferSensores[2][i] <= zonaMortaSensorCm)
-  { if (msg)Serial.println(";VL2_RE;");// range error VL2 (VL53L1X)
+  // range error VL2 (VL53L1X)
+  if (bufferSensors[2][i] >= heightSensorLimit || bufferSensors[2][i] <= deathZoneSensors)
+  {
+    if (msg) {
+      Serial.println(";VL2_RE;");
+
+      Serial.print("range: ");
+      Serial.print(vl2.ranging_data.range_mm);
+      Serial.print("\tstatus: ");
+      Serial.print(VL53L1X::rangeStatusToString(vl2.ranging_data.range_status));
+      Serial.print("\tpeak signal: ");
+      Serial.print(vl2.ranging_data.peak_signal_count_rate_MCPS);
+      Serial.print("\tambient: ");
+      Serial.print(vl2.ranging_data.ambient_count_rate_MCPS);
+
+      Serial.println();
+    }
     resultado = resultado - 4;
   }
 
-  if (bufferSensores[3][i] >= alturaLimiteCm || bufferSensores[3][i] <= zonaMortaSensorCm)
-  { if (msg)Serial.println(";VL3_RE;");// range error VL3 (VL53L1X)
+  // range error VL3 (VL53L1X)
+  if (bufferSensors[3][i] >= heightSensorLimit || bufferSensors[3][i] <= deathZoneSensors)
+  {
+    if (msg)
+    {
+      Serial.println(";VL3_RE;");
+
+      Serial.print("range: ");
+      Serial.print(vl3.ranging_data.range_mm);
+      Serial.print("\tstatus: ");
+      Serial.print(VL53L1X::rangeStatusToString(vl3.ranging_data.range_status));
+      Serial.print("\tpeak signal: ");
+      Serial.print(vl3.ranging_data.peak_signal_count_rate_MCPS);
+      Serial.print("\tambient: ");
+      Serial.print(vl3.ranging_data.ambient_count_rate_MCPS);
+
+      Serial.println();
+
+
+    }
     resultado = resultado - 8;
   }
 
-  if (bufferSensores[4][i] >= alturaLimiteCm || bufferSensores[4][i] <= zonaMortaSensorCm)
-  { if (msg)Serial.println(";TF1_RE;");// range error TF1 (TF Mini Plus)
+  // range error TF1 (TF Mini Plus)
+  if (bufferSensors[4][i] >= heightSensorLimit || bufferSensors[4][i] <= deathZoneSensors)
+  { if (msg) {
+      Serial.println(";TF1_RE;");
+      tfmP.printReply();
+    }
     resultado = resultado - 16;
   }
 
@@ -489,10 +639,10 @@ int validarLeituraDistancia (boolean msg) {
   Verifica o estado da execução do código e indica a separação de dados por setor por
   meio da interrupção do sensor hall da roda.
 */
-void interrupcao( ) {
+void hallinterrupt( ) {
 
   // detachInterrupt (HALL_INTERRUPT_PIN);
-  if (estadoLED) { //captura ligada
+  if (getAllData) { //captura ligada
     hallInterrupt = true;
     noInterrupts();
   }
@@ -519,7 +669,7 @@ void motorPwm(int m1, int m2) {
   Função para ler um ou mais Sensores HC-SR04,
   retorna a distância em cm.
 */
-long sensorHC (int trigpin , int echopin) {
+long getDataHC (int trigpin , int echopin) {
 
   digitalWrite(trigpin, LOW);
   delayMicroseconds(2);
@@ -532,10 +682,10 @@ long sensorHC (int trigpin , int echopin) {
 }
 
 /*
-  Função para ler os dados Gyroscópio e acelerômetro. MPU
+  Função para ler os dados giroscópio e acelerômetro. (MPU)
   Salva os 3 eixos
 */
-void giroscopio( ) {
+void getDataGY( ) {
 
   Wire.beginTransmission(MPU);
   Wire.write(0x3B);
@@ -553,13 +703,12 @@ void giroscopio( ) {
   Função para imprimir os dados do buffer (matriz [8][i],
   onde i são as linhas armazenadas até o momento).
 */
-void imprimirBuffer( ) {
+void printBuffer( ) {
 
   for (int cont = 0;  cont < i ; cont++) {
-    Serial.print(";");
-    Serial.print(cont);                   Serial.print(";");//ID;
+    Serial.print(";");  Serial.print(cont);  Serial.print(";");//ID;
     for (int j = 0; j <= 7; j++ ) {
-      Serial.print(bufferSensores[j][cont]);      Serial.print(";");//Sensores;
+      Serial.print(bufferSensors[j][cont]);  Serial.print(";");//Sensores;
     }
     Serial.println("");
   }
@@ -571,25 +720,35 @@ void imprimirBuffer( ) {
   da distância.
   Configurado para 5 sensores de distância, indo da posição 0 a 4
 */
-void imprimirStats( ) {
+void printStats( ) {
 
-  int16_t min[5]; //Valor mínimo
-  int16_t max[5]; //Valor máximo
-  int16_t med[5]; //Valor médio
+  int16_t   min[5]; //Valor mínimo
+  int16_t   max[5]; //Valor máximo
+  double    med[5]; //Valor médio
 
   //Define o início
   for (int j = 0 ; j < 5 ; j++) {
-    min[j] = bufferSensores[j][0];
-    max[j] = bufferSensores[j][0];
-    med[j] = bufferSensores[j][0];
+    min[j] = bufferSensors[j][0];
+    max[j] = bufferSensors[j][0];
+    med[j] = double(bufferSensors[j][0] / (i));
+
+   /*Serial.print (j);
+    Serial.print ("j] calc = ");
+    Serial.print(double(bufferSensors[j][0]));
+    Serial.print (" /  ");
+    Serial.print (i);
+    Serial.print (" =  ");
+    Serial.println(double(med[j]));
+    Serial.print (" =  ");
+    */
   }
 
   //Acha o min, med e max
   for (int cont = 1;  cont < i ; cont++) {
     for (int j = 0 ; j < 5 ; j++) {
-      min[j] = min(min[j], bufferSensores[j][cont] );
-      med[j] = med[j] + bufferSensores[j][cont];
-      max[j] = max(bufferSensores[j][cont] , max[j]);
+      min[j] = min(min[j], bufferSensors[j][cont] );
+      med[j] = float (med[j] + (bufferSensors[j][cont]));
+      max[j] = max(bufferSensors[j][cont] , max[j]);
     }
   }
   //Gera as médias
@@ -597,11 +756,11 @@ void imprimirStats( ) {
 
   //Imprime
   Serial.print("\n;Sensor ;Min ;Med(");   Serial.print(i);
-  Serial.print(");Max;\n;TF1"); printMinMedMax (min[4], med[4], max[4]);
-  Serial.print(";HC1");          printMinMedMax (min[0], med[0], max[0]);
-  Serial.print(";VL1");          printMinMedMax (min[1], med[1], max[1]);
-  Serial.print(";VL2");          printMinMedMax (min[2], med[2], max[2]);
-  Serial.print(";VL3");          printMinMedMax (min[3], med[3], max[3]);
+  Serial.print(");Max;\n;TF1");  printMinMeanMax (min[4], med[4], max[4]);
+  Serial.print(";HC1");          printMinMeanMax (min[0], med[0], max[0]);
+  Serial.print(";VL1");          printMinMeanMax (min[1], med[1], max[1]);
+  Serial.print(";VL2");          printMinMeanMax (min[2], med[2], max[2]);
+  Serial.print(";VL3");          printMinMeanMax (min[3], med[3], max[3]);
 
 }
 
@@ -609,28 +768,28 @@ void imprimirStats( ) {
 /*
   Função auxiliar para imprimir os valores min med max
 */
-void printMinMedMax (int min, int med, int max) {
+void printMinMeanMax (int min, float med, int max) {
   Serial.print(";\t");
-  Serial.print(min);   Serial.print(";\t");
-  Serial.print(med);   Serial.print(";\t");
-  Serial.print(max);   Serial.println(";");
+  Serial.print(min);          Serial.print(";\t");
+  Serial.print((med));   Serial.print(";\t");
+  Serial.print(max);          Serial.println(";");
 }
 
 /*
-  Função para definir a
-  velocidade do módulo Bluetooth,
-  o nome e a
-  senha PIN.
+  Função para definir ajustes no módulo Bluetooth:
+    velocidade,
+    nome e a
+    senha PIN.
 */
 void setupBluetooth ( ) {
 
   //Serial.begin(9600);
   delay(5000);
-  Serial.print(setNomeBluetooth);
+  Serial.print(setBtName);
   delay(5000);
-  Serial.print(setPINBluetooth);
+  Serial.print(setBtPIN);
   delay(5000);
-  Serial.print(setVelocidadeBluetooth);
+  Serial.print(setBtSpeed);
   delay(5000);
   //Serial.begin(115200);
 }
@@ -640,66 +799,83 @@ void setupBluetooth ( ) {
   Menu de opções pelo terminal ou Bluetooth
 
   0 - Interrompe o experimento.   Imprime ";ON;"
-  1 - Inicia o experimento.       Imprime ";OFF;"
+  1 - Iniciar o experimento.       Imprime ";OFF;"
 
   i - Indica a direção de início do ponto marcado. Imprime ";Dir_INI;"
   f - Indica a direção do final  do ponto marcado. Imprime ";Dir_FIM;"
 
   d - debug ON
   p - ping para teste. Imprime ";ping;"
-  m - memória livre. Imprime ";mem_livre; QTD;"
-  r - reset
+  m - memória livre. Imprime ";mem:; QTD;"
+  e - estatísticas. Imprime um resumo do buffer (min, med, max)
+  r - imprime a rawData
 
 */
-void lerComandosBluetooth( ) {
+void readBTCmd( ) {
+  if (Serial.available())
+  {
+    bluetoothData = Serial.read();
 
-  dadoBluetooth = Serial.read();
+    switch (bluetoothData) {
+      case '1':
+        if (!getAllData) {
+          Serial.println(";ON;");
+          getAllData = false;
+          preStartPosStop( );
+        }
+        break;
 
-  switch (dadoBluetooth) {
-    case 1:
-      if (!estadoLED) {
-        Serial.println(";ON;");
-        estadoLED = false;
-        preStartPosStop( );
-      }
-      break;
+      case '0':
+        if (getAllData) {
+          getAllData = true;
+          preStartPosStop( );
+          Serial.println(";OFF;");
+        }
+        break;
 
-    case 0:
-      if (estadoLED) {
-        estadoLED = true;
-        preStartPosStop( );
-        Serial.println(";OFF;");
-      }
-      break;
+      case 'i':
+        Serial.println(";Dir_INI;");
+        break;
 
-    case 'i':
-      Serial.println(";Dir_INI;");
-      break;
+      case 'f':
+        Serial.println(";Dir_FIM;");
+        break;
 
-    case 'f':
-      Serial.println(";Dir_FIM;");
-      break;
+      case 'm':
+        Serial.print(";mem:");
+        Serial.print(freeMemory());
+        Serial.println(";");
+        break;
 
-    case 'm':
-      Serial.print(";mem_livre;");
-      Serial.print(freeMemory());
-      Serial.println(";bytes;"); //bytes de 2048 bytes (Uno e Nano)
-      break;
+      case 'p':
+        Serial.println(";ping;");
+        break;
 
-    case 'p':
-      Serial.println(";ping;");
-      break;
+      case 'd':
+        debug = !debug;
+        Serial.print(";debug;");
+        Serial.print(debug);
+        Serial.println(";");
+        break;
 
-    case 'd':     
-      debug = !debug;
-      Serial.print(";debug;");
-      Serial.print(debug);
-      Serial.println(";");
-      break;
+      case 'e':
+        stats = !stats;
+        Serial.print(";stats;");
+        Serial.print(stats);
+        Serial.println(";");
+        break;
 
-    default:
-      // comando(s)
-      break;
+      case 'r':
+        rawData = !rawData;
+        Serial.print(";rawData;");
+        Serial.print(rawData);
+        Serial.println(";");
+        break;
+
+      default:
+        // comando(s)
+        break;
+    }
   }
   Serial.flush();
 }
@@ -707,17 +883,22 @@ void lerComandosBluetooth( ) {
 
 void preStartPosStop( ) {
 
-  estadoLED = !estadoLED; // altera o estado do LED
-  if (estadoLED) {
-    Serial.println (";start; \n;ID;HC1;VL1;VL2;VL3;TF1;GyX;GyY;GyZ;");
+  getAllData = !getAllData; // altera o estado do LED
+  if (getAllData) {
+    //Pré execução
+    Serial.println (";start;");
+    if (rawData) Serial.println (";ID;HC1;VL1;VL2;VL3;TF1;GyX;GyY;GyZ;");
   }
   else {
     Serial.println (";stop;");
+    //Pós execução
     if (i > 0 ) {
-      if (debug) imprimirBuffer( );
-      imprimirStats( );
+
+      if (rawData)  printBuffer( );
+      if (stats)    printStats( );
+
       i = 0;
     }
   }
-  digitalWrite(LED_PIN, estadoLED);
+  digitalWrite(LED_PIN, getAllData);
 }

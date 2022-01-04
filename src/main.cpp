@@ -1,6 +1,38 @@
 
-/* ---------------------------------------------------------------------
+/* -----------------------------------------------------------------------
+    __________                          .___     .__               
+   \______   \ ____   ____ _____     __| _/____ |__|___________   
+     |       _//  _ \_/ ___\\__  \   / __ |/ __ \|  \_  __ \__  \  
+     |    |   (  <_> )  \___ / __ \_/ /_/ \  ___/|  ||  | \// __ \_
+     |____|___/\____/ \_  __>______/\_____|\____ >__||__|  (______/
+                        \/           
+                  _________                      __   
+                /   _____/ _____ _____ ________/  |_ 
+                \_____  \ /     \\__  \\_  __ \   __\
+                /        \  Y Y  \/ __ \|  | \/|  |  
+               /________ /__|_|__(______/__|   |__|  
+              
+--------------------------------------------------------------------------
+    Sistema de sensoreamento para Roçadeira Smart
+    Mestrado: 2020-2022 
+
+    Version: 1.2
+    Date: 01/01/2022
+
     Autor: Eugênio Pierazzoli
+    pierazzoli@gmail.com
+    eugenio.pierazzoli@aluno.unipampa.edu.br
+
+    https://github.com/pierazzoli/Sensoriamento_Capim
+
+    PPGCAP (Programa de Pós-graduação em Computação Aplicada)
+    Unipampa Campus Bagé e Embrapa Pecuária Sul
+
+    Orientador: Dr. Naylor Bastiani Perez
+    Coorientador: Dr. Leonardo Bidese de Pinho
+
+    Bolsista de Iniciação Científica: Willian Domingues
+
   ------------------------------------------------------------------------
   Componentes:
     1 Arduino Nano (Old Bootloader 328P)
@@ -118,7 +150,7 @@
 
   --------------------------------------------------------------------------------
   --------------------------------------------------------------------------------
-   Soma do consumo de pico esperado:
+   Consumo de pico máximo esperado:
 
       1 (TF Mini Plus 200mA) + 3 (VL53L1X 40mA) + 1 (Hall 25mA) +
       1 (HC-SR04 15mA) + 1 (MPU6050 10mA) + 1 (DHT11 1mA) +  1 LED +
@@ -158,38 +190,45 @@
 // ------------------ Variáveis Ambientais e Constantes -------------------------
 // ==============================================================================
 
-float version = 3112.21;
+#define cPI 3.1415926535897932384626433832795028841971693993751058209749445923078164062862089
+
+const double version = 1.3;
 
 boolean debug = false;
 boolean rawData = true;
 boolean stats = false;
 boolean continuousMode = true;
 
-
-int8_t i; //Index do buffer
+volatile uint8_t i; //Index do buffer
 #define bufferSZ 10
 int16_t bufferSensors[8][bufferSZ + 1];
 
-#define deathZoneSensors    2    //Menor valor de zona morta dos sensores
-#define heightSensorInstallCm 77 //valor medido 76.5 a 79 cm (folgas acoplamento)
-#define heightSensorLimit 106    // Altura medida quando a roda é erguida a 20 cm
+
+#define deathZoneSensors        2 //Menor valor de zona morta dos sensores
+#define heightSensorInstallCm  77 //Valor medido 76.5 a 79 cm (folgas acoplamento)
+#define heightSensorLimit     106 //Altura medida com a roda erguida a 20 cm
 
 #define heightNoPasture    5     //
 #define heightMinPasture  12     //Limite inferior
 #define heightMinHerbs    30     //Limite inferior da erva
 #define heightMeanHerbs   40     //Limite considerado certo de erva
 
-/*
-  #define minSpeedMPS     0.11     //Deslocamento mínimo de 0,4 km/h
-  #define maxSpeedMPS     1.11     //Deslocamento de 4 km/h
 
+#define minSpeedMPS     0.11                  //Deslocamento mínimo de 0,4 km/h
+#define maxSpeedMPS     1.11                  //Deslocamento de 4 km/h
 
-  // Distância total de 161cm / 23cm por pulso = 7 slot PWM
-  #define bufferSZLenghtEquip 7
-  #define bufferSZSections 2      //Motores ou setores das cordas
-  int16_t bufferPWM[bufferSZSections][bufferSZLenghtEquip];
-*/
+#define equipLenghtSW   0.161                 //Distância sensor-aplicador em m
+const double radiusOfWheel = 0.337;           //Raio da roda em m (eixo ao chão)
 
+#define bufferSZEquipLenght 7                 // Distância por pulso = 7 slot PWM (161cm/23cm)
+#define bufferSZSections    2    
+uint8_t bufferPWM[bufferSZSections][bufferSZEquipLenght]; //Motores ou setores das cordas
+
+#define diameterWheel (radiusOfWheel * 2.0)   // diametro da roda em m
+volatile int countHallInterrupt = 0;          // Número de pulsos
+volatile unsigned long lastTime = 0;          // último pulso ms
+unsigned long timeSpeed = 0;                  // Armazena o tempo em ms para printSpeed
+  
 // ==============================================================================
 //          --------------- Habilitar sensores ----------------
 // ==============================================================================
@@ -213,7 +252,7 @@ int16_t bufferSensors[8][bufferSZ + 1];
   boolean SensorHallEnable = true;
 */
 // ==============================================================================
-// --------------- Pinagem, temporizações e ajustes dos sensores ----------------
+// --------------- Pinagem e temporizações / ajustes dos sensores ----------------
 // ==============================================================================
 
 //Bluetooth
@@ -223,7 +262,7 @@ int16_t bufferSensors[8][bufferSZ + 1];
 #define setBtPIN "AT+PIN0000"
 //Velocidade BAUD4 = 9600 ,  BAUD8 = 115200
 #define setBtSpeed "AT+BAUD8"
-int bluetoothData = 0;
+volatile int bluetoothData = 0;
 
 //HC-04 (HC01)
 #define HC1_TRIG_PIN 3
@@ -290,37 +329,47 @@ boolean hallInterrupt = false;
 #define LED_PIN 13
 bool getAllData = false; // Variável de estado
 
+//LDR (PhotoDiode) Sensor de luz
+#define LDR_PIN A6   // Pino analógico de entrada do PhotoDiode
+
 // ==============================================================================
-// --------------------------- Protótipo das Funções  ---------------------------
+// ---------------------------        Funções         ---------------------------
 // ==============================================================================
 void  setupBluetooth (void);      //Ajusta o Bluetooth (Senha, nome, velocidade)
 
 void  preStartPosStop(void);      //Muda o estado do LED e imprime estados.
-void  hallinterrupt (void);         //Interrupção Hall. Gera flag.
-void  readBTCmd (void);//Lê char (Tag, start/stop, ping, memória livre)
+void  hallinterrupt (void);       //Interrupção Hall. Gera flag.
+void  readBTCmd (void);           //Lê char (Tag, start/stop, ping, memória livre)
 
-void  setDataBuffer (void);   // Tarefa de ler os sensores e armazenar
+void  setDataBuffer (void);       // Tarefa de ler os sensores e armazenar
 void  printBuffer(void);
 void  printStats(void);
 void  printMinMeanMax (int min, float med, int max);
+void  printCompressedBuffer(void);       //formato simplificado
+void  printSpeed(boolean mps);           // velocidade de deslocamento (m/s ou km/h)
+void  printDistance( );                  //imprime a distância percorrida
 
 long  getDataHC (int trigpin , int echopin);
 void  getDataGY (void);
+int   getLDRValue( );
 int   checkDistanceVaule (boolean msg); //Verifica mínimo e máximo esperado
 
-void  motorPwm (int m1, int m2);       // Saída motor ou setor após deslocamento
+void  motorPwm (int m1, int m2);        // Saída motor ou setor após deslocamento
 
-// ==============================================================================
-// ==============================================================================
-// ----------------------- Setup -----------------------
-// ==============================================================================
-// ==============================================================================
+
+
+/////////////////////////////////////////////////////////////////////////////////
 void setup( ) {
+/////////////////////////////////////////////////////////////////////////////////
 
 
-  //Serial
+/////////////////////////////////////////////////////////////////////////////////
+//  Serial
+/////////////////////////////////////////////////////////////////////////////////
+
   Serial.begin(9600); //Bauds
-  //Mensagens
+
+//Mensagens e modos de operação
   Serial.print(";SS;Ver:"); //"Starting Setup"
   Serial.print(float(version));
   Serial.print(";mem:"); Serial.print(freeMemory()); Serial.println(";");
@@ -328,11 +377,18 @@ void setup( ) {
   if (continuousMode) Serial.println(";Mod_Cont;");
   if (debug) Serial.println(";debug;");
 
-  //Inicializa o I2C
+/////////////////////////////////////////////////////////////////////////////////
+//  I2C
+/////////////////////////////////////////////////////////////////////////////////
+
   Wire.begin();
   Wire.setClock(400000); //I2C à 400 kHz
 
-  //TF Mini Plus
+
+/////////////////////////////////////////////////////////////////////////////////
+//  TF1 - TF Mini Plus
+/////////////////////////////////////////////////////////////////////////////////
+
   tfSerial.begin( 115200);
   delay(20);
   tfmP.begin( &tfSerial);
@@ -342,11 +398,19 @@ void setup( ) {
   else
     tfmP.sendCommand( SET_FRAME_RATE, FRAME_0);// FRAME_0
 
-  //HC1
+
+/////////////////////////////////////////////////////////////////////////////////
+//  HC1 - HC-SR04
+/////////////////////////////////////////////////////////////////////////////////
+
   pinMode( HC1_TRIG_PIN, OUTPUT );   //HC-04 trig
   pinMode( HC1_ECHO_PIN, INPUT  );   //HC-04 echo
 
-  //VL53L1X
+
+/////////////////////////////////////////////////////////////////////////////////
+// VL1, VL2 e VL3 - Sensores ToF VL53L1X
+/////////////////////////////////////////////////////////////////////////////////
+  
   pinMode( SHUTDOWN_VL1_PIN, OUTPUT );    //Desliga VL1
   digitalWrite(SHUTDOWN_VL1_PIN, LOW);
   pinMode( SHUTDOWN_VL2_PIN, OUTPUT  );   //Desliga VL2
@@ -399,32 +463,56 @@ void setup( ) {
     vl3.stopContinuous();
   }
 
-  //I2C Giroscópio e acelerômetro
+
+/////////////////////////////////////////////////////////////////////////////////
+//  I2C Giroscópio e acelerômetro
+/////////////////////////////////////////////////////////////////////////////////
+
   Wire.beginTransmission(MPU);
   Wire.write(0x6B);
   Wire.write(0);
   Wire.endTransmission(true);
 
-  //LED onboard D13
+
+/////////////////////////////////////////////////////////////////////////////////
+//  LED onboard D13 - Indica se está capturando.
+/////////////////////////////////////////////////////////////////////////////////
+
   pinMode(LED_PIN, OUTPUT);
 
-  //Pushbutton
+
+/////////////////////////////////////////////////////////////////////////////////
+//  Pushbutton
+/////////////////////////////////////////////////////////////////////////////////
+
   pinMode(BUTTON_START_STOP_PIN, INPUT_PULLUP);
 
-  //Interrupção pelo Hall
+
+/////////////////////////////////////////////////////////////////////////////////
+//  Interrupção
+/////////////////////////////////////////////////////////////////////////////////
+
   pinMode(HALL_INTERRUPT_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(HALL_INTERRUPT_PIN), hallinterrupt, RISING);
 
-  //PWM
+
+/////////////////////////////////////////////////////////////////////////////////
+// PWM - Motores ou setores
+/////////////////////////////////////////////////////////////////////////////////
   pinMode(PWM_M1_PIN, OUTPUT);
   pinMode(PWM_M2_PIN, OUTPUT);
 
   /*
-    // Bluetooth - Velocidade, Nome, PIN
-    //setupBluetooth ();
+/////////////////////////////////////////////////////////////////////////////////
+// Bluetooth - Velocidade, Nome, PIN
+/////////////////////////////////////////////////////////////////////////////////
+
+// setupBluetooth ();
 
 
-    //DHT11
+/////////////////////////////////////////////////////////////////////////////////
+// DHT11 - Umidade e temperatura
+/////////////////////////////////////////////////////////////////////////////////
     dht.begin();
     Serial.print(F(";Umid: "));
     Serial.print(int(dht.readHumidity()));
@@ -432,6 +520,12 @@ void setup( ) {
     Serial.print(int(dht.readTemperature()));
     Serial.println(F("°C;"));
   */
+
+
+/////////////////////////////////////////////////////////////////////////////////
+// LDR
+/////////////////////////////////////////////////////////////////////////////////
+   pinMode(LDR_PIN, OUTPUT);
 
 
   i = 0; //index do buffer dos sensores
@@ -443,14 +537,11 @@ void setup( ) {
 
 /*
   ==============================================================================
-  ==============================================================================
   ------------------------------------ Loop ------------------------------------
-  ==============================================================================
   ==============================================================================
 */
 void loop( ) {
   //wdt_reset ();
-
 
 
   // Controle de Start/Stop pelo botão
@@ -643,6 +734,7 @@ void hallinterrupt( ) {
 
   // detachInterrupt (HALL_INTERRUPT_PIN);
   if (getAllData) { //captura ligada
+    countHallInterrupt++;
     hallInterrupt = true;
     noInterrupts();
   }
@@ -901,4 +993,47 @@ void preStartPosStop( ) {
     }
   }
   digitalWrite(LED_PIN, getAllData);
+}
+
+
+void printCompressedBuffer( ) {
+
+
+}
+
+void printSpeed(boolean mps ){
+
+  double speed = 0.0;
+  speed = ((cPI * diameterWheel * (countHallInterrupt/9) * 1000.0) / ((millis() - timeSpeed) * 4) );
+  timeSpeed = millis();
+  countHallInterrupt = 0;
+
+  Serial.print (";V=");
+  if (mps){ //m/s 
+   Serial.print (speed);
+   Serial.println (" m/s;");
+  }
+  else { // km/h 
+   Serial.print (speed * 3.6);
+   Serial.println (" km/h;");
+  }
+}
+
+
+void printDistance( ) {
+  double distance = 0.0;
+  distance = countHallInterrupt * 0.23;
+
+  Serial.print (";d=");
+  Serial.print (distance);
+  Serial.println (" m;");
+}
+
+int getLDRValue( ) {
+ float analogVal = (float)analogRead(LDR_PIN);
+	int result =  (int)(analogVal / 40.95);   // Converte para %
+  //Adicionar uma relação entre os lumens do luximetro e a curva do LDR
+
+  return result;
+
 }

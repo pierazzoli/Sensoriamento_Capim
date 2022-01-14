@@ -311,7 +311,7 @@ int AcX, AcY, AcZ, Tmp, GyX, GyY, GyZ;
 
 // Sensor de campo Hall
 #define HALL_INTERRUPT_PIN 2
-boolean hallInterrupt = false;
+boolean hall = false;
 
 // PWM Motores
 #define PWM_M1_PIN 10
@@ -337,27 +337,30 @@ bool getAllData = false; // Variável de estado
 // ==============================================================================
 // ---------------------------        Funções         ---------------------------
 // ==============================================================================
-void  setupBluetooth (void);      //Ajusta o Bluetooth (Senha, nome, velocidade)
+void  setupBluetooth (void);       //Ajusta o Bluetooth (Senha, nome, velocidade)
 
-void  preStartPosStop(void);      //Muda o estado do LED e imprime estados.
-void  hallinterrupt (void);       //Interrupção Hall. Gera flag.
-void  readBTCmd (void);           //Lê char (Tag, start/stop, ping, memória livre)
+void  preStartPosStop (void);      //Muda o estado do LED e imprime estados.
+void  hallInterrupts (void);       //Interrupção Hall. Levanta uma flag.
+void  hallAction(void);            //Ações para a interrupção dentro do loop.
 
-void  setDataBuffer (void);       // Tarefa de ler os sensores e armazenar
-void  printBuffer(void);
-void  printStats(void);
+void  readBTCmd (void);            //Lê char (Tag, start/stop, ping, memória livre)
+void  bufferOverflowAction (void); //Descarrega o buffer quando cheio
+
+void  setDataBuffer (void);        // Tarefa de ler os sensores e armazenar
+void  printBuffer (void);
+void  printStats (void);
 void  printMinMeanMax (int min, float med, int max);
-void  printCompressedBuffer(void);       //formato simplificado
-void  printSpeed(boolean mps);           // velocidade de deslocamento (m/s ou km/h)
-void  printDistance( );                  //imprime a distância percorrida
-void printVLDetails(int id, uint16_t range, String status, float signalMCPS, float AmbienteMCPS);
+void  printCompressedBuffer (void);           //formato simplificado
+void  printSpeed (boolean mps);               // velocidade de deslocamento (m/s ou km/h)
+void  printDistance (void);                   //imprime a distância percorrida
+void  printVLDetails (int id, uint16_t range, String status, float signalMCPS, float AmbienteMCPS);
 
 long  getDataHC (int trigpin , int echopin);
 void  getDataGY (void);
-int   getLDRValue( );
-int   checkDistanceVaule (boolean msg); //Verifica mínimo e máximo esperado
+int   getLDRValue (void);
+int   checkDistanceValue (boolean msg);       //Verifica mínimo e máximo esperado
 
-void  motorPwm (int m1, int m2);        // Saída motor ou setor após deslocamento
+void  motorPwm (int m1, int m2);              // Saída motor ou setor após deslocamento
 
 
 
@@ -500,7 +503,7 @@ void setup( ) {
   /////////////////////////////////////////////////////////////////////////////////
 
   pinMode(HALL_INTERRUPT_PIN, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(HALL_INTERRUPT_PIN), hallinterrupt, RISING);
+  attachInterrupt(digitalPinToInterrupt(HALL_INTERRUPT_PIN), hallInterrupts, RISING);
 
 
   /////////////////////////////////////////////////////////////////////////////////
@@ -571,31 +574,40 @@ void loop( ) {
   if (getAllData) { //Captura dados se Ligado
 
     setDataBuffer (); //Lê os sensores de distância e salva no buffer
-    checkDistanceVaule(debug);
+    checkDistanceValue(debug);
+    i++; //Incrementa o buffer
 
-    i++; //Índice do buffer
-
-    if (i >= bufferSZ) {
-      Serial.println (";BO;"); //Buffer overflow
-
-      if (rawData)  printBuffer( );
-      if (stats)    printStats( );
-      i = 0; //Índice do buffer
-    }
-
-    if (hallInterrupt) {
-      Serial.println(";h;"); //hall
-      hallInterrupt = false;
-
-      if (rawData)  printBuffer( );
-      if (stats)    printStats( );
-
-      i = 0; //Índice do buffer
-      interrupts();
-    }
+    bufferOverflowAction(); //Tratamento para estouro
+    hallAction();           //Tratamento para interrupção
   }
 }//fim do loop()
 
+
+void hallAction(){
+ if (hall) {
+      Serial.println(";h;"); //hall
+      
+      hall = false;
+      countHallInterrupt++;
+      interrupts();
+      
+      if (rawData)  printBuffer( );
+      if (stats)    printStats( );
+      i = 0; //Zera Índice do buffer      
+    }
+}
+
+
+void bufferOverflowAction(){
+
+  if (i >= bufferSZ) {
+      Serial.println (";BO;"); //Buffer overflow
+      if (rawData)  printBuffer( );
+      if (stats)    printStats( );
+      i = 0; //Zera Índice do buffer
+    }
+
+}
 
 /*
   Realiza  a gravação dos valores lidos para cm da distância.
@@ -641,7 +653,7 @@ void setDataBuffer ( ) {
     -8 para VL3 - Sensor VL53L1X
     -16 para TF1 - Sensor TF Mini Plus
 */
-int checkDistanceVaule (boolean msg) {
+int checkDistanceValue (boolean msg) {
 
   int resultado = 0;
 
@@ -724,6 +736,7 @@ int checkDistanceVaule (boolean msg) {
 }
 
 void printVLDetails(int id , uint16_t range, String status, float signalMCPS, float AmbienteMCPS) {
+  
   Serial.print(";VL");
   Serial.print(int(id));
   Serial.print("_RE:");
@@ -743,12 +756,10 @@ void printVLDetails(int id , uint16_t range, String status, float signalMCPS, fl
   Verifica o estado da execução do código e indica a separação de dados por setor por
   meio da interrupção do sensor hall da roda.
 */
-void hallinterrupt( ) {
+void hallInterrupts( ) {
 
-  // detachInterrupt (HALL_INTERRUPT_PIN);
-  if (getAllData) { //captura ligada
-    countHallInterrupt++;
-    hallInterrupt = true;
+  if (getAllData) { //captura ligada    
+    hall = true;
     noInterrupts();
   }
 }
@@ -997,18 +1008,21 @@ void preStartPosStop( ) {
     if (distanceCounter ) countHallInterrupt = 0;
   }
   else {
-    Serial.println (";stop;");
+ 
     //Pós execução
+    Serial.println (";stop;");   
     if (i > 0 ) {
-
       if (rawData)  printBuffer( );
       if (stats)    printStats( );
       i = 0;
     }
+    hallAction();  
     if (distanceCounter) printDistance( );
-    if (speedCounter)    printSpeed(true);// true = m/s, false = km/h
+    if (speedCounter)    printSpeed(true); // true = m/s, false = km/h         
   }
+  
   digitalWrite(LED_PIN, getAllData);
+
 }
 
 

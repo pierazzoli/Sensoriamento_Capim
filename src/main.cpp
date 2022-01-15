@@ -13,6 +13,10 @@
                /________ /__|_|__(______/__|   |__|
 
   --------------------------------------------------------------------------
+// @author E. Pierazzoli
+
+
+
     Sistema de sensoreamento para Roçadeira Smart
     Mestrado PPGCAP: 2020-2022
 
@@ -38,7 +42,7 @@
     1 Arduino Nano (Old Bootloader 328P)
     (ATMEGA328P 16MHz, 2 KB RAM, 30 KB Flash)
 
-    1 Sensor de Ultrassônico HC-SR04
+    1 HC-SR04
     1 Giroscópio    (I2C)
     1 Bluetooth     (UART)
     3 VL53L1X       (I2C)
@@ -168,7 +172,6 @@
 
 #include <Arduino.h>               //framework-arduino-avr 5.1.0
 #include <MemoryFree.h>            //v0.3.0
-//#include <avr/wdt.h>
 #include <Wire.h>                  //v1.0
 /*
   Para múltiplas instâncias, é necessário selecionar qual está ativo, com os comandos
@@ -190,46 +193,205 @@
 // ==============================================================================
 // ------------------ Variáveis Ambientais e Constantes -------------------------
 // ==============================================================================
-
+/*!
+    @defined    cPI
+    @abstract   PI used to calculate the circumference of the wheel.
+*/
 #define cPI 3.1415926535897932384626433832795028841971693993751058209749445923078164062862089
 
-const double version = 1.3;
+/*!
+    @const      version 
+    @abstract   Version of the release
+*/
+const PROGMEM double version = 1.3;
+/*!
+    @volatile   debug 
+    @abstract   Enable or disable debug mode
+*/
+volatile boolean debug = false;
 
-boolean debug = false;
-boolean rawData = true;
-boolean stats = false;
-boolean continuousMode = true;
-boolean speedCounter = true;
-boolean distanceCounter = true;
+/*!
+    @volatile   rawData 
+    @abstract   print the raw data of the sensors
+*/
+volatile boolean rawData = true;
 
-volatile uint8_t i; //Index do buffer
+/*!
+    @volatile   statistics  
+    @abstract   print the statistics data of the sensors
+*/
+volatile boolean statistics  = false;
+
+/*!
+    @const   continuousMode 
+    @abstract   set the sensors to continuous Mode
+    @discussion f the sensors are not installed with minimum spacing, 
+    they must be triggered sequentially.
+*/
+const PROGMEM boolean continuousMode = true;
+
+/*!
+    @volatile   speedCounter  
+    @abstract   Enable hall pulse counting.
+*/
+volatile boolean speedCounter = true;
+
+/*!
+    @volatile   distanceCounter  
+    @abstract   Enable the distance counting.
+*/
+volatile boolean distanceCounter = true;
+
+/*!
+    @volatile   distanceCounter  
+    @abstract   Index do buffer
+*/
+volatile uint8_t i; 
+
+/*!
+    @defined    bufferSZ
+    @abstract   Sensor buffer size to store all sensor data
+    @discussion Store until the buffer is full, the free memory shoud observed to change the values.
+*/
 #define bufferSZ 20
 int16_t bufferSensors[8][bufferSZ + 1];
 
-#define deathZoneSensors        2 //Menor valor de zona morta dos sensores
-#define heightSensorInstallCm  77 //Valor medido 76.5 a 79 cm (folgas acoplamento)
-#define heightSensorLimit     106 //Altura medida com a roda erguida a 20 cm
 
-#define heightNoPasture    5     //
-#define heightMinPasture  12     //Limite inferior
-#define heightMinHerbs    30     //Limite inferior da erva
-#define heightMeanHerbs   40     //Limite considerado certo de erva
+/*!
+    @defined    deathZoneSensors
+    @abstract   Maximum sensor dead zone value
+    @discussion Store until the buffer is full, the free memory shoud observed to change the values.
+*/
+#define deathZoneSensors        2 
 
 
+/*!
+    @defined    heightSensorInstallCm
+    @abstract   Valor medido 76.5 a 79 cm (folgas acoplamento)
+    @discussion 
+*/
+#define heightSensorInstallCm  77
+
+
+/*!
+    @defined    heightSensorLimit
+    @abstract   Altura medida com a roda erguida a 20 cm
+    @discussion 
+*/
+#define heightSensorLimit     106 
+
+
+/*!
+    @defined    heightSensorLimit
+    @abstract   Altura medida com a roda erguida a 20 cm
+    @discussion 
+*/
+#define heightNoPasture    5
+
+/*!
+    @defined    heightMinPasture
+    @abstract   Limite inferior
+    @discussion 
+*/
+#define heightMinPasture  12
+
+/*!
+    @defined    heightMinHerbs
+    @abstract   Limite inferior da erva
+    @discussion 
+*/
+#define heightMinHerbs    30
+
+/*!
+    @defined    heightMeanHerbs
+    @abstract   Altura média da erva daninha
+    @discussion 
+*/
+#define heightMeanHerbs   40
+
+/*!
+    @defined    minSpeedMPS
+    @abstract   Velocidade mínima de deslocamento
+    @discussion Deslocamento mínimo de 0,4 km/h para o equipamento campo limpo
+                visa definir a velocidade mínima de operação e o corte do fluxo
+                defensivo
+*/
 #define minSpeedMPS     0.11                  //Deslocamento mínimo de 0,4 km/h
-#define maxSpeedMPS     1.11                  //Deslocamento de 4 km/h
 
-#define equipLenghtSW   0.161                 //Distância sensor-aplicador em m
-const double radiusOfWheel = 0.337;           //Raio da roda em m (eixo ao chão)
 
+/*!
+    @defined    maxSpeedMPS
+    @abstract   Velocidade máxima de deslocamento
+    @discussion Deslocamento máxima de 11 km/h para o equipamento campo limpo
+                visa definir a velocidade máxima de operação e o corte do fluxo
+                defensivo
+*/
+#define maxSpeedMPS  2.78                  
+
+/*!
+    @defined    barHeight
+    @abstract   Bar height from the ground (m)
+    @discussion 
+*/
+#define barHeight   0.161                 //Distância sensor-aplicador em m
+
+         
+
+/*!
+    @defined bufferSZEquipLenght
+    @abstract    Size of buffer 
+    @discussion  Simple buffer to store the applicator flow and height data 
+                 until the applicator is over the read point.
+*/
 #define bufferSZEquipLenght 7                 // Distância por pulso = 7 slot PWM (161cm/23cm)
-#define bufferSZSections    2
-uint8_t bufferPWM[bufferSZSections][bufferSZEquipLenght]; //Motores ou setores das cordas
 
-#define diameterWheel (radiusOfWheel * 2.0)   // diametro da roda em m
-volatile int countHallInterrupt = 0;          // Número de pulsos
-volatile unsigned long lastTime = 0;          // último pulso ms
-unsigned long timeSpeed = 0;                  // Armazena o tempo em ms para printSpeed
+/*!
+    @defined bufferSZSections
+    @abstract    Number of motors or sections 
+    @discussion  Data for the number of motors or sections of the applicator
+*/
+#define bufferSZSections    2
+
+
+/*!
+    @defined bufferPWM
+    @volatile    bufferPWM 
+    @discussion  Simple buffer to store the applicator flow and height data 
+                until the applicator section is over the read point. The size 
+                shoud cover the number of setpoints based on the distance 
+                between the bar and the aplicator.
+*/
+volatile uint8_t bufferPWM[bufferSZSections][bufferSZEquipLenght]; //Motores ou setores das cordas
+
+
+/*!
+    @defined wheelRadius
+    @abstract    radius Of Wheel (meters)
+    @discussion  Used to calculate running distance. 
+                 Measure from the middle of the wheel axle to the ground (meters).
+*/
+#define wheelRadius   0.337 
+
+/*!
+    @defined wheelDiameter 
+    @abstract    Wheel radius (meters)
+    @discussion  Used to calculate running distance.                  
+*/
+#define wheelDiameter (wheelRadius * 2.0)   // diametro da roda em m
+
+/*!
+    @defined countHallInterrupts
+    @volatile    bufferPWM 
+    @discussion  Simple buffer to store the applicator flow and height data 
+                until the applicator section is over the read point. The size 
+                shoud cover the number of setpoints based on the distance 
+                between the bar and the aplicator.
+*/
+volatile int countHallInterrupts = 0;     // Número de pulsos
+
+volatile unsigned long lastTime = 0;      // último pulso ms
+
+volatile unsigned long timeSpeed = 0;     // Armazena o tempo em ms para printSpeed
 
 // ==============================================================================
 //          --------------- Habilitar sensores ----------------
@@ -259,7 +421,7 @@ unsigned long timeSpeed = 0;                  // Armazena o tempo em ms para pri
 
 //Bluetooth
 //Nome: UGV
-#define setBtName "AT+NAMEUGV"
+#define setBtName "AT+NAMEUGV" 
 //Senha PIN: 0000
 #define setBtPIN "AT+PIN0000"
 //Velocidade BAUD4 = 9600 ,  BAUD8 = 115200
@@ -329,13 +491,13 @@ boolean hall = false;
 
 // LED
 #define LED_PIN 13
-bool getAllData = false; // Variável de estado
+volatile bool actionMode = false; // Variável de estado
 
 //LDR (PhotoDiode) Sensor de luz
 #define LDR_PIN A6   // Pino analógico de entrada do PhotoDiode
 
 // ==============================================================================
-// ---------------------------        Funções         ---------------------------
+// ---------------------------       Functions        ---------------------------
 // ==============================================================================
 void  setupBluetooth (void);       //Ajusta o Bluetooth (Senha, nome, velocidade)
 
@@ -348,7 +510,7 @@ void  bufferOverflowAction (void); //Descarrega o buffer quando cheio
 
 void  setDataBuffer (void);        // Tarefa de ler os sensores e armazenar
 void  printBuffer (void);
-void  printStats (void);
+void  printStatistics (void);
 void  printMinMeanMax (int min, float med, int max);
 void  printCompressedBuffer (void);           //formato simplificado
 void  printSpeed (boolean mps);               // velocidade de deslocamento (m/s ou km/h)
@@ -362,11 +524,78 @@ int   checkDistanceValue (boolean msg);       //Verifica mínimo e máximo esper
 
 void  motorPwm (int m1, int m2);              // Saída motor ou setor após deslocamento
 
+// ==============================================================================
+// ---------------------------        Mensages        ---------------------------
+// ==============================================================================
+//#include <avr/pgmspace.h>
+const char string_0[] PROGMEM =  ";debug;"; 
+const char string_1[] PROGMEM =  ";SS;Ver:";
+const char string_2[] PROGMEM =  ";mem free:";
+const char string_3[] PROGMEM =  ";mem buffer:";
+const char string_4[] PROGMEM =  ";Mod_Cont;";
+const char string_5[] PROGMEM =  ";EOS;";
+const char string_6[] PROGMEM =  ";h;";                   //hall 
+const char string_7[] PROGMEM =  ";BO;";                  //
+const char string_8[] PROGMEM =  ";HC1_RE;";
+const char string_9[] PROGMEM =  ";HC2_RE;";
+const char string_10[] PROGMEM = ";HC3_RE;";
+const char string_11[] PROGMEM = ";HC4_RE;";
+const char string_12[] PROGMEM = ";VL1_TO;";
+const char string_13[] PROGMEM = ";VL2_TO;";
+const char string_14[] PROGMEM = ";VL3_TO;";
+const char string_15[] PROGMEM = ";VL4_TO;";
+const char string_16[] PROGMEM = ";VL";
+const char string_17[] PROGMEM = "_RE:";
+const char string_18[] PROGMEM = "\tstatus: ";
+const char string_19[] PROGMEM = "\tpeak signal: ";
+const char string_20[] PROGMEM = "\tambient: ";
+const char string_21[] PROGMEM = "\n;Sen ;Min ;Med(";
+const char string_22[] PROGMEM = ");Max;\n;TF1";
+const char string_23[] PROGMEM = ";HC1";
+const char string_24[] PROGMEM = ";HC2";
+const char string_25[] PROGMEM = ";HC3";
+const char string_26[] PROGMEM = ";HC4";
+const char string_27[] PROGMEM = ";VL1";
+const char string_28[] PROGMEM = ";VL2";
+const char string_29[] PROGMEM = ";VL3";
+const char string_30[] PROGMEM = ";VL4";
+const char string_31[] PROGMEM = ";ON;";
+const char string_32[] PROGMEM = ";OFF;";
+const char string_33[] PROGMEM = ";DI;";
+const char string_34[] PROGMEM = ";DF;";
+const char string_35[] PROGMEM = ";ping;";
+const char string_36[] PROGMEM = ";debug;";
+const char string_37[] PROGMEM = ";statistics;";
+const char string_38[] PROGMEM = ";rawData;";
+const char string_39[] PROGMEM = ";start;";
+const char string_40[] PROGMEM = ";ID;HC1;VL1;VL2;VL3;TF1;GyX;GyY;GyZ;";
+const char string_41[] PROGMEM = ";stop;";
+const char string_42[] PROGMEM = ";V=";
+const char string_43[] PROGMEM =  " m/s;";
+const char string_44[] PROGMEM = " Km/h;";
+const char string_45[] PROGMEM = " Mph;";
+const char string_46[] PROGMEM = ";d=";
+const char string_47[] PROGMEM = " m;";
+const char string_48[] PROGMEM = ";TF1_RE: ";
+//const char string_49[] PROGMEM = ;
+//const char string_50[] PROGMEM = ;
+//const char string_51[] PROGMEM = ;
 
+
+/*
+Before PROGMEM
+RAM:   [========= ]  86.9% (used 1780 bytes from 2048 bytes)
+Flash: [======    ]  61.3% (used 18818 bytes from 30720 bytes)
+
+After PROGMEM
+RAM:   [=======   ]  70.7% (used 1448 bytes from 2048 bytes)
+Flash: [======    ]  61.3% (used 18822 bytes from 30720 bytes)
+
+*/
 
 /////////////////////////////////////////////////////////////////////////////////
 void setup( ) {
-  /////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////
 
 
   /////////////////////////////////////////////////////////////////////////////////
@@ -374,18 +603,19 @@ void setup( ) {
   /////////////////////////////////////////////////////////////////////////////////
 
   Serial.begin(9600); //Bauds
+ if (debug)
+  {
+    Serial.println(string_0); //";debug;
+    //Mensagens e modos de operação
+    Serial.print(string_1); //"Starting Setup" ";SS;Ver:"
+    Serial.print(double(version));
+    Serial.print(string_2); //";mem free:"
+    Serial.print(freeMemory()); Serial.println(";");
 
-  //Mensagens e modos de operação
-  Serial.print(";SS;Ver:"); //"Starting Setup"
-  Serial.print(double(version));
-  Serial.print(";mem free:");
-  Serial.print(freeMemory()); Serial.println(";");
-
-  Serial.print(";mem buffer:");
-  Serial.print(int(sizeof(bufferSensors))); Serial.println(";");
-
-  if (continuousMode) Serial.println(";Mod_Cont;");
-  if (debug) Serial.println(";debug;");
+    Serial.print(string_3); //";mem buffer:"
+    Serial.print(int(sizeof(bufferSensors))); Serial.println(";");
+    if (continuousMode) Serial.println(string_4); //";Mod_Cont;"
+}
 
   /////////////////////////////////////////////////////////////////////////////////
   //  I2C
@@ -399,7 +629,7 @@ void setup( ) {
   //  TF1 - TF Mini Plus
   /////////////////////////////////////////////////////////////////////////////////
 
-  tfSerial.begin( 115200);
+  tfSerial.begin( 115200 );
   delay(20);
   tfmP.begin( &tfSerial);
   tfmP.sendCommand( SOFT_RESET, 0);
@@ -509,6 +739,7 @@ void setup( ) {
   /////////////////////////////////////////////////////////////////////////////////
   // PWM - Motores ou setores
   /////////////////////////////////////////////////////////////////////////////////
+  
   pinMode(PWM_M1_PIN, OUTPUT);
   pinMode(PWM_M2_PIN, OUTPUT);
 
@@ -537,12 +768,10 @@ void setup( ) {
   /////////////////////////////////////////////////////////////////////////////////
   pinMode(LDR_PIN, OUTPUT);
 
-
   i = 0; //index do buffer dos sensores
   //Serial.print(";mem:"); Serial.print(freeMemory());Serial.println(";");
-  Serial.println(";EOS;");  //Mensagem "End of setup"
+  if (debug) Serial.println(string_5);  //Mensagem "End of setup" ";EOS;"
 
-  //wdt_enable (WDTO_2S);
 }
 
 /*
@@ -551,7 +780,7 @@ void setup( ) {
   ==============================================================================
 */
 void loop( ) {
-  //wdt_reset ();
+  
 
 
   // Controle de Start/Stop pelo botão
@@ -565,13 +794,12 @@ void loop( ) {
   //Controle de Start/Stop pelo bluetooth ou terminal 0 para 1 inicia
   if (Serial.available()) {
     readBTCmd( );
-    Serial.flush();
-    //Serial.println ("ok bt");
+    Serial.flush();    
   }
 
 
   //Estado de execução do sistema
-  if (getAllData) { //Captura dados se Ligado
+  if (actionMode) { //Captura dados se Ligado
 
     setDataBuffer (); //Lê os sensores de distância e salva no buffer
     checkDistanceValue(debug);
@@ -585,14 +813,14 @@ void loop( ) {
 
 void hallAction(){
  if (hall) {
-      Serial.println(";h;"); //hall
+      if (debug) Serial.println(string_6); //hall ";h;"
       
       hall = false;
-      countHallInterrupt++;
+      countHallInterrupts++;
       interrupts();
       
-      if (rawData)  printBuffer( );
-      if (stats)    printStats( );
+      if (rawData)        printBuffer( );
+      if (statistics )    printStatistics( );
       i = 0; //Zera Índice do buffer      
     }
 }
@@ -601,12 +829,11 @@ void hallAction(){
 void bufferOverflowAction(){
 
   if (i >= bufferSZ) {
-      Serial.println (";BO;"); //Buffer overflow
-      if (rawData)  printBuffer( );
-      if (stats)    printStats( );
+      if (debug)          Serial.println (string_7); //Buffer overflow ";BO;"
+      if (rawData)        printBuffer( );
+      if (statistics )    printStatistics( );
       i = 0; //Zera Índice do buffer
     }
-
 }
 
 /*
@@ -642,31 +869,32 @@ void setDataBuffer ( ) {
   bufferSensors[7][i] = GyZ;
 }
 
-/*
-  Valida os valores lidos e retorna o somatório de erros
-  para valores fora do esperado ou sem resposta.
-
-  Retorno:
-    -1 para HC1 - Sensor HC-SR04
-    -2 para VL1 - Sensor VL53L1X
-    -4 para VL2 - Sensor VL53L1X
-    -8 para VL3 - Sensor VL53L1X
-    -16 para TF1 - Sensor TF Mini Plus
+/*!  
+  @function
+  @abstract
+  @discussion Validate the values read by the distance sensors and returns the sum of errors.
+              The msg parameter define whether the error will be printed.
+  @param      msg[in]    
+  @result     -1  for HC1 - Sensor HC-SR04
+              -2  for VL1 - Sensor VL53L1X
+              -4  for VL2 - Sensor VL53L1X
+              -8  for VL3 - Sensor VL53L1X
+              -16 for TF1 - Sensor TF Mini Plus
 */
 int checkDistanceValue (boolean msg) {
 
-  int resultado = 0;
+  volatile int8_t errorCode = 0;
 
   // range error HC1 (HC-SR04)
   if (bufferSensors[0][i] >= heightSensorLimit || bufferSensors[0][i] <= deathZoneSensors)
   {
-    if (msg) Serial.println(";HC1_RE;");
-    resultado = -1;
+    if (msg) Serial.println(string_8); //";HC1_RE;"
+    errorCode = -1;
   }
 
-  if (vl1.timeoutOccurred()) if (msg) Serial.println(";VL1_TO;"); // TIMEOUT
-  if (vl2.timeoutOccurred()) if (msg) Serial.println(";VL2_TO;"); // TIMEOUT
-  if (vl3.timeoutOccurred()) if (msg) Serial.println(";VL3_TO;"); // TIMEOUT
+  if (vl1.timeoutOccurred()) if (msg) Serial.println(string_12); // TIMEOUT ";VL1_TO;"
+  if (vl2.timeoutOccurred()) if (msg) Serial.println(string_13); // TIMEOUT ";VL2_TO;"
+  if (vl3.timeoutOccurred()) if (msg) Serial.println(string_14); // TIMEOUT ";VL3_TO;"
 
   // range error VL1 (VL53L1X)
   if (bufferSensors[1][i] >= heightSensorLimit || bufferSensors[1][i] <= deathZoneSensors)
@@ -678,21 +906,9 @@ int checkDistanceValue (boolean msg) {
                      VL53L1X::rangeStatusToString(vl1.ranging_data.range_status),
                      vl1.ranging_data.peak_signal_count_rate_MCPS ,
                      vl1.ranging_data.ambient_count_rate_MCPS
-                    );
-
-      /*
-        Serial.print(";VL1_RE:");
-        Serial.print(vl1.ranging_data.range_mm);
-        Serial.print("\tstatus: ");
-        Serial.print(VL53L1X::rangeStatusToString(vl1.ranging_data.range_status));
-        Serial.print("\tpeak signal: ");
-        Serial.print(vl1.ranging_data.peak_signal_count_rate_MCPS);
-        Serial.print("\tambient: ");
-        Serial.print(vl1.ranging_data.ambient_count_rate_MCPS);
-
-        Serial.println();*/
+                    );                    
     }
-    resultado = resultado  - 2;
+    errorCode = errorCode  - 2;
   }
 
   // range error VL2 (VL53L1X)
@@ -705,7 +921,7 @@ int checkDistanceValue (boolean msg) {
                      vl2.ranging_data.peak_signal_count_rate_MCPS,
                      vl2.ranging_data.ambient_count_rate_MCPS);
     }
-    resultado = resultado - 4;
+    errorCode = errorCode - 4;
   }
 
   // range error VL3 (VL53L1X)
@@ -719,60 +935,65 @@ int checkDistanceValue (boolean msg) {
                      vl3.ranging_data.peak_signal_count_rate_MCPS,
                      vl3.ranging_data.ambient_count_rate_MCPS);
     }
-    resultado = resultado - 8;
+    errorCode = errorCode - 8;
   }
 
   // range error TF1 (TF Mini Plus)
   if (bufferSensors[4][i] >= heightSensorLimit || bufferSensors[4][i] <= deathZoneSensors)
   { if (msg) {
-      Serial.print(";TF1_RE: ");
+      Serial.print(string_48);// ";TF1_RE: "
       tfmP.printReply();
       Serial.println(";");
     }
-    resultado = resultado - 16;
+    errorCode = errorCode - 16;
   }
 
-  return resultado;
+  return errorCode;
 }
 
 void printVLDetails(int id , uint16_t range, String status, float signalMCPS, float AmbienteMCPS) {
   
-  Serial.print(";VL");
+  Serial.print(string_16); // ";VL"
   Serial.print(int(id));
-  Serial.print("_RE:");
+  Serial.print(string_17); // "_RE:"
   Serial.print(range);
-  Serial.print("\tstatus: ");
+  Serial.print(string_18); // "\tstatus: "
   Serial.print(status);
-  Serial.print("\tpeak signal: ");
+  Serial.print(string_19); // "\tpeak signal: "
   Serial.print(signalMCPS);
-  Serial.print("\tambient: ");
+  Serial.print(string_20); // "\tambient: "
   Serial.print(AmbienteMCPS);
   Serial.println(";");
 }
 
 
 
-/*
-  Verifica o estado da execução do código e indica a separação de dados por setor por
-  meio da interrupção do sensor hall da roda.
+/*!
+    @function
+    @abstract   Interruption activated by the hall sensor
+    @discussion If in operation mode, enable action in the loop.
 */
 void hallInterrupts( ) {
 
-  if (getAllData) { //captura ligada    
+  if (actionMode) { //captura ligada    
     hall = true;
     noInterrupts();
   }
 }
 
 /*
-  Define o PWM dos motores em construção.
-  Usar MAP,
-  Em testes:
-  Existe um valor mínimo para iniciar o movimento.
-  Existe um valor mínimo menor para manter o movimento.
-  Existe um valor adicional para acelerar.
-  Existe um valor adicional para desacelerar e manter o movimento.
-  Bug quando se reseta, dependendo do estado (precisa setar em 0 como o primeiro passso no SETUP).
+  @function
+  @abstract   Define o PWM dos motores em construção.
+  @discussion Usar MAP,
+              Em testes:
+              Existe um valor mínimo para iniciar o movimento.
+              Existe um valor mínimo menor para manter o movimento.
+              Existe um valor adicional para acelerar.
+              Existe um valor adicional para desacelerar e manter o movimento.
+              Bug quando se reseta, dependendo do estado 
+              (precisa setar em 0 como o primeiro passso no SETUP).
+    @param      m1[in]     Control the Motor 1
+    @param      m2[in]     Control the Motor 2
 */
 void motorPwm(int m1, int m2) {
 
@@ -781,9 +1002,15 @@ void motorPwm(int m1, int m2) {
   analogWrite( PWM_M2_PIN, m2);
 }
 
-/*
-  Função para ler um ou mais Sensores HC-SR04,
-  retorna a distância em cm.
+/*!
+    @function
+    @abstract Distance with the HC-SR04 Sensor
+    @discussion Use a TTL pulse to calc the distance without temperature calibration. 
+                It consider the speed of air as 340 m/s. 
+    @param      trigpin[in] PIN of trigger
+    @param      echopin[in] PIN of echo
+    @result     The distance in cm
+  
 */
 long getDataHC (int trigpin , int echopin) {
 
@@ -836,27 +1063,18 @@ void printBuffer( ) {
   da distância.
   Configurado para 5 sensores de distância, indo da posição 0 a 4
 */
-void printStats( ) {
+void printStatistics( ) {
 
-  int16_t   min[5]; //Valor mínimo
-  int16_t   max[5]; //Valor máximo
-  double    med[5]; //Valor médio
+  volatile int16_t   min[5]; //Valor mínimo
+  volatile int16_t   max[5]; //Valor máximo
+  volatile double    med[5]; //Valor médio
 
   //Define o início
   for (int j = 0 ; j < 5 ; j++) {
     min[j] = bufferSensors[j][0];
     max[j] = bufferSensors[j][0];
     med[j] = double(bufferSensors[j][0] / (i));
-
-    /*Serial.print (j);
-      Serial.print ("j] calc = ");
-      Serial.print(double(bufferSensors[j][0]));
-      Serial.print (" /  ");
-      Serial.print (i);
-      Serial.print (" =  ");
-      Serial.println(double(med[j]));
-      Serial.print (" =  ");
-    */
+   
   }
 
   //Acha o min, med e max
@@ -871,12 +1089,15 @@ void printStats( ) {
   for (int j = 0 ; j < 5; j++) med[j] = med[j] / i;
 
   //Imprime
-  Serial.print("\n;Sen ;Min ;Med(");   Serial.print(i);
-  Serial.print(");Max;\n;TF1");  printMinMeanMax (min[4], med[4], max[4]);
-  Serial.print(";HC1");          printMinMeanMax (min[0], med[0], max[0]);
-  Serial.print(";VL1");          printMinMeanMax (min[1], med[1], max[1]);
-  Serial.print(";VL2");          printMinMeanMax (min[2], med[2], max[2]);
-  Serial.print(";VL3");          printMinMeanMax (min[3], med[3], max[3]);
+  Serial.print(string_21);   Serial.print(i); //"\n;Sen ;Min ;Med("
+  
+  Serial.print(string_22);  //");Max;\n;TF1"
+  printMinMeanMax (min[4], med[4], max[4]);
+  
+  Serial.print(string_23);          printMinMeanMax (min[0], med[0], max[0]);
+  Serial.print(string_27);          printMinMeanMax (min[1], med[1], max[1]);
+  Serial.print(string_28);          printMinMeanMax (min[2], med[2], max[2]);
+  Serial.print(string_29);          printMinMeanMax (min[3], med[3], max[3]);
 
 }
 
@@ -934,56 +1155,56 @@ void readBTCmd( ) {
 
     switch (bluetoothData) {
       case '1':
-        if (!getAllData) {
-          Serial.println(";ON;");
-          getAllData = false;
+        if (!actionMode) {
+          Serial.println(string_31); //";ON;"
+          actionMode = false;
           preStartPosStop( );
         }
         break;
 
       case '0':
-        if (getAllData) {
-          getAllData = true;
+        if (actionMode) {
+          actionMode = true;
           preStartPosStop( );
-          Serial.println(";OFF;");
+          Serial.println(string_32); //";OFF;"
         }
         break;
 
       case 'i':
-        Serial.println(";DI;"); //Dir_INI;
+        Serial.println(string_33); //Dir_INI; ";DI;"
         break;
 
       case 'f':
-        Serial.println(";DF;"); //Dir_INI;
+        Serial.println(string_34); //Dir_INI; ";DF;"
         break;
 
       case 'm':
-        Serial.print(";mem:");
+        Serial.print(string_2); //";mem:"
         Serial.print(freeMemory());
         Serial.println(";");
         break;
 
       case 'p':
-        Serial.println(";ping;");
+        Serial.println(string_35); //";ping;"
         break;
 
       case 'd':
         debug = !debug;
-        Serial.print(";debug;");
+        Serial.print(string_36); //";debug;"
         Serial.print(debug);
         Serial.println(";");
         break;
 
       case 'e':
-        stats = !stats;
-        Serial.print(";stats;");
-        Serial.print(stats);
+        statistics  = !statistics ;
+        Serial.print(string_37); //";statistics;"
+        Serial.print(statistics);
         Serial.println(";");
         break;
 
       case 'r':
         rawData = !rawData;
-        Serial.print(";rawData;");
+        Serial.print(string_38); //";rawData;"
         Serial.print(rawData);
         Serial.println(";");
         break;
@@ -999,29 +1220,29 @@ void readBTCmd( ) {
 
 void preStartPosStop( ) {
 
-  getAllData = !getAllData; // altera o estado do LED
-  if (getAllData) {
+  actionMode = !actionMode; // altera o estado do LED
+  if (actionMode) {
     //Pré execução
-    Serial.println (";start;");
-    if (rawData) Serial.println (";ID;HC1;VL1;VL2;VL3;TF1;GyX;GyY;GyZ;");
-    if (speedCounter) countHallInterrupt = 0;
-    if (distanceCounter ) countHallInterrupt = 0;
+    Serial.println (string_39); //";start;"
+    if (rawData) Serial.println (string_40); //";ID;HC1;VL1;VL2;VL3;TF1;GyX;GyY;GyZ;"
+    if (speedCounter) countHallInterrupts = 0;
+    if (distanceCounter ) countHallInterrupts = 0;
   }
   else {
  
     //Pós execução
-    Serial.println (";stop;");   
+    Serial.println (string_41); //";stop;"  
     if (i > 0 ) {
-      if (rawData)  printBuffer( );
-      if (stats)    printStats( );
+      if (rawData)        printBuffer( );
+      if (statistics )    printStatistics( );
       i = 0;
     }
     hallAction();  
-    if (distanceCounter) printDistance( );
-    if (speedCounter)    printSpeed(true); // true = m/s, false = km/h         
+    if (distanceCounter)  printDistance( );
+    if (speedCounter)     printSpeed(true); // true = m/s, false = km/h         
   }
   
-  digitalWrite(LED_PIN, getAllData);
+  digitalWrite(LED_PIN, actionMode);
 
 }
 
@@ -1048,18 +1269,18 @@ void printCompressedBuffer( ) {
 void printSpeed(boolean mps) {
 
   double speed = 0.0;
-  speed = ((cPI * diameterWheel * (countHallInterrupt / 9) * 1000.0) / ((millis() - timeSpeed) * 4) );
+  speed = ((cPI * wheelDiameter * (countHallInterrupts / 9) * 1000.0) / ((millis() - timeSpeed) * 4) );
   timeSpeed = millis();
-  countHallInterrupt = 0;
+  countHallInterrupts = 0;
 
-  Serial.print (";V=");
+  Serial.print (string_42); // ";V="
   if (mps) { // m/s
     Serial.print (speed);
-    Serial.println (" m/s;");
+    Serial.println (string_43); // " m/s;"
   }
   else { // km/h
     Serial.print (speed * 3.6);
-    Serial.println (" km/h;");
+    Serial.println (string_44); //" Km/h;"
   }
 }
 
@@ -1067,11 +1288,11 @@ void printSpeed(boolean mps) {
 void printDistance( ) {
 
   double distance = 0.0;
-  distance = countHallInterrupt * 0.23;
+  distance = countHallInterrupts * 0.23;
 
-  Serial.print (";d=");
+  Serial.print (string_46); //";d="
   Serial.print (distance);
-  Serial.println (" m;");
+  Serial.println (string_47); // " m;"
 }
 
 int getLDRValue( ) {

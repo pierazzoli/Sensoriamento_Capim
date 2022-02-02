@@ -380,18 +380,15 @@ volatile uint8_t bufferPWM[bufferSZSections][bufferSZEquipLenght]; //Motores ou 
 #define wheelDiameter (wheelRadius * 2.0)   // diametro da roda em m
 
 /*!
-    @defined countHallInterrupts
-    @volatile    bufferPWM 
-    @discussion  Simple buffer to store the applicator flow and height data 
-                until the applicator section is over the read point. The size 
-                shoud cover the number of setpoints based on the distance 
-                between the bar and the aplicator.
+    @volatile countHallInterrupts
+    @abstract  
+    @discussion
 */
-volatile int countHallInterrupts = 0;     // Número de pulsos
+volatile int countHallInterrupts = 0;     // Number of pulses
 
-volatile unsigned long lastTime = 0;      // último pulso ms
+volatile unsigned long lastTime = 0;      // last pulse (ms)
 
-volatile unsigned long timeSpeed = 0;     // Armazena o tempo em ms para printSpeed
+volatile unsigned long timeSpeed = 0;     // store the time in ms for printSpeed
 
 // ==============================================================================
 //          --------------- Habilitar sensores ----------------
@@ -525,40 +522,51 @@ int   checkDistanceValue (boolean msg);       //Verifica mínimo e máximo esper
 void  motorPwm (int m1, int m2);              // Saída motor ou setor após deslocamento
 
 // ==============================================================================
-// ---------------------------        Mensages        ---------------------------
+// ----------------------- Mensages / Internacionalization  ---------------------
 // ==============================================================================
 //#include <avr/pgmspace.h>
+
+//Start Mensages  
 const char string_0[] PROGMEM =  ";debug;"; 
 const char string_1[] PROGMEM =  ";SS;Ver:";
 const char string_2[] PROGMEM =  ";mem free:";
 const char string_3[] PROGMEM =  ";mem buffer:";
 const char string_4[] PROGMEM =  ";Mod_Cont;";
+
+//Loop Mensages 
 const char string_5[] PROGMEM =  ";EOS;";
-const char string_6[] PROGMEM =  ";h;";                   //hall 
-const char string_7[] PROGMEM =  ";BO;";                  //
+const char string_6[] PROGMEM =  ";h;";           //hall 
+const char string_7[] PROGMEM =  ";BO;";
+
+//Error Mensages                  
 const char string_8[] PROGMEM =  ";HC1_RE;";
-const char string_9[] PROGMEM =  ";HC2_RE;";
-const char string_10[] PROGMEM = ";HC3_RE;";
-const char string_11[] PROGMEM = ";HC4_RE;";
+//const char string_9[] PROGMEM =  ";HC2_RE;";
+//const char string_10[] PROGMEM = ";HC3_RE;";
+//const char string_11[] PROGMEM = ";HC4_RE;";
 const char string_12[] PROGMEM = ";VL1_TO;";
 const char string_13[] PROGMEM = ";VL2_TO;";
 const char string_14[] PROGMEM = ";VL3_TO;";
-const char string_15[] PROGMEM = ";VL4_TO;";
+//const char string_15[] PROGMEM = ";VL4_TO;";
 const char string_16[] PROGMEM = ";VL";
 const char string_17[] PROGMEM = "_RE:";
 const char string_18[] PROGMEM = "\tstatus: ";
 const char string_19[] PROGMEM = "\tpeak signal: ";
 const char string_20[] PROGMEM = "\tambient: ";
+const char string_48[] PROGMEM = ";TF1_RE: ";
+
+//Statistics Mensages   
 const char string_21[] PROGMEM = "\n;Sen ;Min ;Med(";
 const char string_22[] PROGMEM = ");Max;\n;TF1";
 const char string_23[] PROGMEM = ";HC1";
-const char string_24[] PROGMEM = ";HC2";
-const char string_25[] PROGMEM = ";HC3";
-const char string_26[] PROGMEM = ";HC4";
+//const char string_24[] PROGMEM = ";HC2";
+//const char string_25[] PROGMEM = ";HC3";
+//const char string_26[] PROGMEM = ";HC4";
 const char string_27[] PROGMEM = ";VL1";
 const char string_28[] PROGMEM = ";VL2";
 const char string_29[] PROGMEM = ";VL3";
-const char string_30[] PROGMEM = ";VL4";
+//const char string_30[] PROGMEM = ";VL4";
+
+//Menu Mensages  
 const char string_31[] PROGMEM = ";ON;";
 const char string_32[] PROGMEM = ";OFF;";
 const char string_33[] PROGMEM = ";DI;";
@@ -567,16 +575,23 @@ const char string_35[] PROGMEM = ";ping;";
 const char string_36[] PROGMEM = ";debug;";
 const char string_37[] PROGMEM = ";statistics;";
 const char string_38[] PROGMEM = ";rawData;";
+
+//Log Mensages  
 const char string_39[] PROGMEM = ";start;";
 const char string_40[] PROGMEM = ";ID;HC1;VL1;VL2;VL3;TF1;GyX;GyY;GyZ;";
 const char string_41[] PROGMEM = ";stop;";
+
+//Movement log Mensages  
 const char string_42[] PROGMEM = ";V=";
-const char string_43[] PROGMEM =  " m/s;";
+const char string_43[] PROGMEM = " m/s;";
 const char string_44[] PROGMEM = " Km/h;";
 const char string_45[] PROGMEM = " Mph;";
 const char string_46[] PROGMEM = ";d=";
 const char string_47[] PROGMEM = " m;";
-const char string_48[] PROGMEM = ";TF1_RE: ";
+
+
+
+
 //const char string_49[] PROGMEM = ;
 //const char string_50[] PROGMEM = ;
 //const char string_51[] PROGMEM = ;
